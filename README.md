@@ -10,14 +10,14 @@ We also use the [Gurobi](https://github.com/JuliaOpt/Gurobi.jl) and [Mosek](http
 
 ## Useage ##
 This repo contains examples for three systems in robot planning and control:
-1. Free-flyer motion planning
-<p align="center"><img width="40%" src="img/free-flyer.png"/></p>
+1. Cart-pole with contact
+<p align="center"><img width="35%" src="img/cart-pole.png"/></p>
 
-2. Cart-pole with contact
-<p align="center"><img width="40%" src="img/cart-pole.png"/></p>
+2. Free-flyer motion planning
+<p align="center"><img width="35%" src="img/free-flyer.png"/></p>
 
 3. Dexterous grasping
-<p align="center"><img width="40%" src="img/dexterous_manipulation.pdf"/></p>
+<p align="center"><img width="35%" src="img/dexterous_manipulation.png"/></p>
 
 The MICP for each problem is defined in `{system}/problem.jl` using either the [JuMP](https://github.com/JuliaOpt/JuMP.jl) or [Convex](https://github.com/JuliaOpt/Convex.jl) modeling framework. The `{system}/data_collection.ipynb` notebook must be run first to generate the MICP datasets later used in training.
 
