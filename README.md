@@ -1,5 +1,5 @@
 # mlopt-micp 
-This repository contains code for [Learning Mixed-Integer Convex Optimization Strategies for Robot Planning and Control](asl.stanford.edu/publications) by Abhishek Cauligi\*, Preston Culbertson\*, Bartolomeo Stellato, Dimitris Bertsimas, Mac Schwager, and Marco Pavone (\* denotes equal contribution).
+This repository contains code for [Learning Mixed-Integer Convex Optimization Strategies for Robot Planning and Control](https://arxiv.org/abs/2004.03736) by Abhishek Cauligi\*, Preston Culbertson\*, Bartolomeo Stellato, Dimitris Bertsimas, Mac Schwager, and Marco Pavone (\* denotes equal contribution).
 
 ## Installation ##
 This repository uses Julia-1.2 for the construction of the optimization problems and PyTorch for training the neural network models. The necessary Python packages can be installed by running the following script.
