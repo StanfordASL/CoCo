@@ -1,125 +1,104 @@
 import mosek
 import cvxpy as cp
 import numpy as np
+
 import sys
+import pdb
+import h5py
 
-N = 6
-dh = 0.75
-n_obs = 8 
-n = 2
-m = 2
+class Optimizer():
+  def __init__(self, idx):
+    fn = 'data/testdata{}.h5'.format(idx+1)
+    f = h5py.File(fn, 'r')
 
-# Double integrator matrices
-Ak = np.matrix([[1,dh], [0,1]])
-Ak = np.kron(Ak, np.eye(n))
-Bk = np.matrix([[0.5*dh**2], [dh]])
-Bk = np.kron(Bk, np.eye(n))
+    self.X = f['X'][()].T
+    self.U = f['U'][()].T
+    self.Y = f['Y'][()].T
+    self.O = f['O'][()].T
 
-cons = []
+    self.N = f['N'][()]
+    self.n_obs = self.O.shape[1]
+    self.n = int(self.X.shape[0]/2)
+    self.m = int(self.U.shape[0])
+    self.n_probs = self.X.shape[-1]
 
-# Variables
-x = cp.Variable((2*n,N)) # state
-u = cp.Variable((m,N-1))  # control
+    self.X0 = f['X0'][()].T
+    self.Xg = f['Xg'][()].T
+    self.solve_time = f['solve_time'][()]
+    self.J = f['J'][()]
+    self.node_count = f['node_count'][()]
 
-# Logic variables
-y = cp.Variable((4*n_obs,N-1), integer=True) # binary variables, with no initial constraints on integrality
+    self.Ak = f['Ak'][()].T
+    self.Bk = f['Bk'][()].T
+    self.Q = f['Q'][()]
+    self.R = f['R'][()]
+    self.posmin = f['posmin'][()]
+    self.posmax = f['posmax'][()]
+    self.velmin = f['velmin'][()]
+    self.velmax = f['velmax'][()]
+    self.umin = f['umin'][()]
+    self.umax = f['umax'][()]
 
-# Double integrator matrices
-Ak = np.matrix([[1,dh], [0,1]])
-Ak = np.kron(Ak, np.eye(n))
-Bk = np.matrix([[0.5*dh**2], [dh]])
-Bk = np.kron(Bk, np.eye(n))
+  def construct_problem(self,prob_idx):
+    cons = []
+    obstacles = self.O[:,:,prob_idx]
 
-Q = np.diag(np.array([2.,2,1,1]))
-R = np.diag(np.array([0.1,0.1]))
+    # Variables
+    x = cp.Variable((2*self.n,self.N)) # state
+    u = cp.Variable((self.m,self.N-1))  # control
 
-posmin = np.zeros(2)
-ft2m = 0.3048
-posmax = ft2m*np.array([12.,9])
+    # Logic variables
+    y = cp.Variable((4*self.n_obs,self.N-1), boolean=True) # binary variables, with no initial constraints on integrality
 
-velmin = -0.2
-velmax = 0.2
+    cons += [x[:,0] == self.X0[:,prob_idx]]
 
-mass_ff = 0.5*(15.36+18.08)
-thrust_max = 2*1.
-umax = thrust_max / mass_ff
+    # Dynamics constraints
+    for ii in range(self.N-1):
+      cons += [x[:,ii+1] == self.Ak @ x[:,ii] + self.Bk @ u[:,ii]]
 
+    M = 100. # big M value
+    for i_obs in range(self.n_obs):
+      for i_dim in range(self.n):
+        o_min = obstacles[self.n*i_dim,i_obs]
+        o_max = obstacles[self.n*i_dim+1,i_obs]
 
-# Parameters
-x0 = np.array([3.2327651282903074, 1.8639889326405996, -0.03603204951417299, 0.1869893802945004 ])
-xg = np.hstack((0.9*posmax, np.zeros(n)))
+        for i_t in range(self.N-1):
+          yvar_min = 4*i_obs + self.n*i_dim
+          yvar_max = 4*i_obs + self.n*i_dim + 1
 
-obstacles = np.zeros((4,n_obs))
-obstacles[:,0] = np.array([1.2424206311085149, 2.018378801026382, 1.9680147331717865, 2.3938458246877725])
-obstacles[:,1] = np.array([2.8444978100500102, 3.4223733537122962, 0.8743882162614238, 1.3867471415089896])
-obstacles[:,2] = np.array([2.234562183271801, 2.6751572994146655, 0.8328177555395004, 1.258507360435613])
-obstacles[:,3] = np.array([1.2424206311085149, 1.6862713872463595, 1.6952039828455434, 2.0336794262861475])
-obstacles[:,4] = np.array([1.8549963125408497, 2.591768377676192, 0.8328177555395004, 1.5084740719325855])
-obstacles[:,5] = np.array([1.8678186722249257, 2.206731894204943, 1.673194026679264, 2.0160116107815096])
-obstacles[:,6] = np.array([1.6058401667009463, 2.1375152896627454, 0.8328177555395004, 1.1888081940185842])
-obstacles[:,7] = np.array([2.8149088329154806, 3.140716143252644, 1.0704990822004385, 1.5983451080141902])
+          cons += [x[i_dim,i_t+1] <= o_min + M*y[yvar_min,i_t]]
+          cons += [-x[i_dim,i_t+1] <= -o_max + M*y[yvar_max,i_t]]
 
-Q = np.diag(np.array([2,2,1,1]))
-R = np.diag(np.array([0.1,0.1]))
+      for i_t in range(self.N-1):
+        yvar_min, yvar_max = 4*i_obs, 4*(i_obs+1)
+        cons += [sum([y[ii,i_t] for ii in range(yvar_min,yvar_max)])]
 
-posmin = np.zeros(2)
-ft2m = 0.3048
-posmax = ft2m*np.array([12.,9])
-
-velmin = -0.2
-velmax = 0.2
-
-mass_ff = 0.5*(15.36+18.08)
-thrust_max = 2*1.
-umax = thrust_max / mass_ff
-
-cons += [x[:,0] == x0]
-
-# Dynamics constraints
-for ii in range(N-1):
-  cons += [x[:,ii+1] == Ak @ x[:,ii] + Bk @ u[:,ii]]
-
-M = 100. # big M value
-for i_obs in range(n_obs):
-  for i_dim in range(n):
-    o_min = obstacles[n*i_dim,i_obs]
-    o_max = obstacles[n*i_dim+1,i_obs]
-
-    for i_t in range(N-1):
-      yvar_min = 4*i_obs + n*i_dim
-      yvar_max = 4*i_obs + n*i_dim + 1
-
-      cons += [x[i_dim,i_t+1] <= o_min + M*y[yvar_min,i_t]]
-      cons += [-x[i_dim,i_t+1] <= -o_max + M*y[yvar_max,i_t]]
-
-  for i_t in range(N-1):
-    yvar_min, yvar_max = 4*i_obs, 4*(i_obs+1)
-    cons += [sum([y[ii,i_t] for ii in range(yvar_min,yvar_max)])]
-
-# Region bounds
-for kk in range(N):
-  for jj in range(n):
-    cons += [posmin[jj] - x[jj,kk] <= 0]
-    cons += [x[jj,kk] - posmax[jj] <= 0]
-
-# Velocity constraints
-for kk in range(N):
-  for jj in range(n):
-    cons += [velmin - x[n+jj,kk] <= 0]
-    cons += [x[n+jj,kk] - velmax <= 0]
+    # Region bounds
+    for kk in range(self.N):
+      for jj in range(self.n):
+        cons += [self.posmin[jj] - x[jj,kk] <= 0]
+        cons += [x[jj,kk] - self.posmax[jj] <= 0]
     
-# Control constraints
-for kk in range(N-1):
-    cons += [cp.norm(u[:,kk]) <= umax]
+    # Velocity constraints
+    for kk in range(self.N):
+      for jj in range(self.n):
+        cons += [self.velmin - x[self.n+jj,kk] <= 0]
+        cons += [x[self.n+jj,kk] - self.velmax <= 0]
+        
+    # Control constraints
+    for kk in range(self.N-1):
+        cons += [cp.norm(u[:,kk]) <= self.umax]
+    
+    lqr_cost = 0.
+    # l2-norm of lqr_cost
+    for kk in range(self.N):
+        lqr_cost += cp.quad_form(x[:,kk]-self.Xg[:,prob_idx], self.Q)
+    
+    for kk in range(self.N-1):
+        lqr_cost += cp.quad_form(u[:,kk], self.R)
 
-cost = 0.
-# l2-norm of cost
-for kk in range(N):
-    cost += cp.quad_form(x[:,kk]-xg, Q)
-
-for kk in range(N-1):
-    cost += cp.quad_form(u[:,kk], R)
-cost
-
-prob = cp.Problem(cp.Minimize(cost), cons)
-prob.solve(solver=cp.MOSEK)
+    self.prob = cp.Problem(cp.Minimize(lqr_cost), cons)
+    return x, u, y
+    
+  def solve(self):
+    self.prob.solve(solver=cp.MOSEK)
