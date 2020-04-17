@@ -54,7 +54,7 @@ class Optimizer():
 
     # Dynamics constraints
     for ii in range(self.N-1):
-      cons += [x[:,ii+1] == self.Ak @ x[:,ii] + self.Bk @ u[:,ii]]
+      cons += [x[:,ii+1] - (self.Ak @ x[:,ii] + self.Bk @ u[:,ii]) == np.zeros(2*self.n)]
 
     M = 100. # big M value
     for i_obs in range(self.n_obs):
@@ -87,15 +87,15 @@ class Optimizer():
         
     # Control constraints
     for kk in range(self.N-1):
-        cons += [cp.norm(u[:,kk]) <= self.umax]
+      cons += [cp.norm(u[:,kk]) <= self.umax]
     
     lqr_cost = 0.
     # l2-norm of lqr_cost
     for kk in range(self.N):
-        lqr_cost += cp.quad_form(x[:,kk]-self.Xg[:,prob_idx], self.Q)
+      lqr_cost += cp.quad_form(x[:,kk]-self.Xg[:,prob_idx], self.Q)
     
     for kk in range(self.N-1):
-        lqr_cost += cp.quad_form(u[:,kk], self.R)
+      lqr_cost += cp.quad_form(u[:,kk], self.R)
 
     self.prob = cp.Problem(cp.Minimize(lqr_cost), cons)
     return x, u, y
