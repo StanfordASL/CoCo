@@ -1,3 +1,4 @@
+import pdb
 import mosek
 import cvxpy as cp
 import numpy as np
@@ -37,7 +38,7 @@ class Optimizer():
     self.sc_min = f['sc_min'][()]
     self.sc_max = f['sc_max'][()]
     self.delta_min = f['delta_min'][()]
-    self.delta_max = f['delta_min'][()]
+    self.delta_max = f['delta_max'][()]
     self.ddelta_min = f['ddelta_min'][()]
     self.ddelta_max = f['ddelta_max'][()]
     self.dh = f['dh'][()]
@@ -100,7 +101,7 @@ class Optimizer():
         cons += [self.nu*dd_max*(y_l-1) <= sc[jj,kk] - self.kappa*d_k - self.nu*dd_k]
         cons += [sc[jj,kk] - self.kappa*d_k - self.nu*dd_k <= f_min*(y_r-1)]
 
-        cons += [sc[jj,kk] <= 0]
+        cons += [-sc[jj,kk] <= 0]
         cons += [sc[jj,kk] <= f_max*y_l]
         cons += [sc[jj,kk] <= f_max*y_r]
 
