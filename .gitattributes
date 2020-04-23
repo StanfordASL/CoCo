@@ -1,7 +1,5 @@
 models/ filter=lfs diff=lfs merge=lfs -text
-cartpole/data/*.jld filter=lfs diff=lfs merge=lfs -text
 manipulation/data/*.jld filter=lfs diff=lfs merge=lfs -text
-free_flyer/data/*.jld filter=lfs diff=lfs merge=lfs -text
 models/mlopt_model_cartpole_20200326_1757_3-layers_32-neurons.jld filter=lfs diff=lfs merge=lfs -text
 models/mlopt_model_free_flyer_20200406_0927_3-layers_128-neurons.jld filter=lfs diff=lfs merge=lfs -text
 models/mlopt_model_manipulation_20200402_1427_3-layers_32-neurons.jld filter=lfs diff=lfs merge=lfs -text
