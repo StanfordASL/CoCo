@@ -40,10 +40,15 @@ class Optimizer():
     prob_success, cost = False, np.Inf
     if solver == cp.MOSEK:
       msk_param_dict = {}
+      msk_param_dict['MSK_IPAR_PRESOLVE_USE'] = 0
+      msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
+
       self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
-      if self.bin_prob.status == 'optimal':
-        prob_success = True
-        cost = self.bin_prob.value
+
+    if self.bin_prob.status == 'optimal':
+      prob_success = True
+      cost = self.bin_prob.value
+      solve_time = self.bin_prob.solver_stats.solve_time
 
     # Clear parameter values after solving
     for k,v in self.bin_prob_parameters.items():
@@ -274,16 +279,14 @@ class Optimizer():
         if v[0] == idx:
           y_guesses[ii] = v[1:]
 
-    found_soln = False
+    prob_success, cost = False, np.Inf
     for ii,idx in enumerate(ind_max):
       y_guess = y_guesses[ii]
       prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
       if prob_success:
-        print("Succeeded!")
-        found_soln = True
+        prob_success = True
         break
-    if not found_soln:
-      print("Failed!")
+    return prob_success, cost
 
   def solve_with_regressor(self, prob_idx):
     features = self.construct_features(prob_idx)
@@ -292,7 +295,4 @@ class Optimizer():
     y_guess = Sigmoid()(out).round().numpy()[:]
 
     prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
-    if prob_success:
-      print("Succeeded!")
-    else:
-      print("Failed!")
+    return prob_success, cost

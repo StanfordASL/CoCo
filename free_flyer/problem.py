@@ -243,12 +243,12 @@ class FreeFlyer(Optimizer):
     params = {'x0': self.X0[:,prob_idx],
                 'xg': self.Xg[:,prob_idx],
                 'obstacles': self.O[:,:,prob_idx]} 
-    return self.solve_bin_prob_with_params(params)
+    return self.solve_bin_prob_with_params(params, solver=solver)
 
   def solve_mlopt_prob_with_idx(self, prob_idx, y_guess, solver=cp.MOSEK):
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx],
       'obstacles': self.O[:,:,prob_idx], 'y': np.reshape(y_guess, self.Y[:,:,0].shape)} 
-    return self.solve_mlopt_prob_with_params(params, y_guess)
+    return self.solve_mlopt_prob_with_params(params, y_guess, solver=solver)
 
   def which_M(self, prob_idx, eq_tol=1e-5, ineq_tol=1e-5):
     x = self.X[:,:,prob_idx]
@@ -349,7 +349,7 @@ class FreeFlyer(Optimizer):
     vv = [np.arange(0,self.n_evals) for _ in range(self.n_obs)]
     strategy_tuples = itertools.product(*vv)
 
-    found_soln = False
+    prob_success, cost = False, np.Inf
     for ii, str_tuple in enumerate(strategy_tuples):
       if ii >= max_evals:
         break
@@ -365,12 +365,10 @@ class FreeFlyer(Optimizer):
       y_guess = np.reshape(y_guess, (y_guess.size))
       prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
       if prob_success:
-        print("Succeeded!")
-        found_soln = True
+        prob_success = True
         break
 
-    if not found_soln:
-      print("Failed!")
+    return prob_success, cost
 
   def solve_with_regressor(self, prob_idx):
     y_guess = np.zeros((4*self.n_obs, self.N-1), dtype=int)
@@ -386,7 +384,4 @@ class FreeFlyer(Optimizer):
       y_guess[4*ii_obs:4*(ii_obs+1), :] = np.reshape(out, (4, self.N-1))
 
     prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
-    if prob_success:
-      print("Succeeded!")
-    else:
-      print("Failed!")
+    return prob_success, cost
