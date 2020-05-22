@@ -259,12 +259,12 @@ class Cartpole(Optimizer):
   def solve_bin_prob_with_idx(self, prob_idx, solver=cp.MOSEK):
     # Construct params for binary problem prob_idx and solve
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx]}
-    return self.solve_bin_prob_with_params(params)
+    return self.solve_bin_prob_with_params(params, solver=solver)
 
   def solve_mlopt_prob_with_idx(self, prob_idx, y_guess, solver=cp.MOSEK):
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx],
       'y':np.reshape(y_guess, self.Y[:,:,0].shape)}
-    return self.solve_mlopt_prob_with_params(params, y_guess)
+    return self.solve_mlopt_prob_with_params(params, y_guess, solver=solver)
 
   def which_M(self, prob_idx, eq_tol=1e-5, ineq_tol=1e-5):
     # Returns list of active logical constraints
