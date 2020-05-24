@@ -8,6 +8,8 @@ from optimizer import Optimizer
 from models import FFNet, BnBCNN
 
 import pdb
+
+import osqp
 import mosek
 import cvxpy as cp
 import numpy as np
@@ -261,9 +263,9 @@ class Cartpole(Optimizer):
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx]}
     return self.solve_bin_prob_with_params(params, solver=solver)
 
-  def solve_mlopt_prob_with_idx(self, prob_idx, y_guess, solver=cp.MOSEK):
+  def solve_mlopt_prob_with_idx(self, prob_idx, y_guess, solver=cp.OSQP):
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx],
-      'y':np.reshape(y_guess, self.Y[:,:,0].shape)}
+      'y':np.reshape(y_guess, self.Y[:,:,0].T.shape).T}
     return self.solve_mlopt_prob_with_params(params, y_guess, solver=solver)
 
   def which_M(self, prob_idx, eq_tol=1e-5, ineq_tol=1e-5):
