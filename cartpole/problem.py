@@ -263,7 +263,7 @@ class Cartpole(Optimizer):
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx]}
     return self.solve_bin_prob_with_params(params, solver=solver)
 
-  def solve_mlopt_prob_with_idx(self, prob_idx, y_guess, solver=cp.OSQP):
+  def solve_mlopt_prob_with_idx(self, prob_idx, y_guess, solver=cp.MOSEK):
     params = {'x0': self.X0[:,prob_idx], 'xg': self.Xg[:,prob_idx],
       'y':np.reshape(y_guess, self.Y[:,:,0].T.shape).T}
     return self.solve_mlopt_prob_with_params(params, y_guess, solver=solver)

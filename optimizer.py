@@ -285,15 +285,17 @@ class Optimizer():
         if v[0] == idx:
           y_guesses[ii] = v[1:]
 
-    prob_success, cost, solve_time, n_evals = False, np.Inf, np.Inf, len(y_guesses)
+    prob_success, cost, total_time, n_evals = False, np.Inf, 0., len(y_guesses)
     for ii,idx in enumerate(ind_max):
       y_guess = y_guesses[ii]
       prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
+
+      total_time += solve_time
       n_evals = ii+1
       if prob_success:
         prob_success = True
         break
-    return prob_success, cost, solve_time, n_evals
+    return prob_success, cost, total_time, n_evals
 
   def solve_with_regressor(self, prob_idx, solver=cp.MOSEK):
     features = self.construct_features(prob_idx)
