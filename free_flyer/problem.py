@@ -356,7 +356,7 @@ class FreeFlyer(Optimizer):
     vv = [np.arange(0,self.n_evals) for _ in range(self.n_obs)]
     strategy_tuples = itertools.product(*vv)
 
-    prob_success, cost, total_time = False, np.Inf, 0.
+    prob_success, cost, total_time, n_evals = False, np.Inf, 0., max_evals
     for ii, str_tuple in enumerate(strategy_tuples):
       if ii >= max_evals:
         break
@@ -374,11 +374,12 @@ class FreeFlyer(Optimizer):
       prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
 
       total_time += solve_time
+      n_evals = ii+1
       if prob_success:
         prob_success = True
         break
 
-    return prob_success, cost, total_time
+    return prob_success, cost, total_time, n_evals
 
   def solve_with_regressor(self, prob_idx, solver=cp.MOSEK):
     y_guess = np.zeros((4*self.n_obs, self.N-1), dtype=int)
