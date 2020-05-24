@@ -45,33 +45,39 @@ class Optimizer():
 
       self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
 
+    prob_success, cost, solve_time = False, np.Inf, np.Inf
+    solve_time = self.bin_prob.solver_stats.solve_time
     if self.bin_prob.status == 'optimal':
       prob_success = True
       cost = self.bin_prob.value
-      solve_time = self.bin_prob.solver_stats.solve_time
 
     # Clear parameter values after solving
     for k,v in self.bin_prob_parameters.items():
       v.value = None 
-    return prob_success, cost
+    return prob_success, cost, solve_time
 
   def solve_mlopt_prob_with_params(self, params, y_guess, solver=cp.MOSEK):
     # Takes problem params and solves convex-ified problem 
     for k,v in self.mlopt_prob_parameters.items():
       v.value = params[k]
 
-    prob_success, cost = False, np.Inf
+    prob_success, cost, solve_time = False, np.Inf, np.Inf
     if solver == cp.MOSEK:
       msk_param_dict = {}
       self.mlopt_prob.solve(solver=solver, mosek_params=msk_param_dict)
-      if self.mlopt_prob.status == 'optimal':
-        prob_success = True
-        cost = self.mlopt_prob.value
+    elif solver == cp.OSQP:
+      self.mlopt_prob.solve(solver=solver)
+
+    solve_time = self.mlopt_prob.solver_stats.solve_time
+    if self.mlopt_prob.status == 'optimal':
+      prob_success = True
+      cost = self.mlopt_prob.value
 
     # Clear parameter values after solving
     for k,v in self.mlopt_prob_parameters.items():
       v.value = None
-    return prob_success, cost
+
+    return prob_success, cost, solve_time
 
   def which_M(self, prob_idx):
     pass
@@ -266,7 +272,7 @@ class Optimizer():
 
     print('Done training')
 
-  def solve_with_classifier(self, prob_idx):
+  def solve_with_classifier(self, prob_idx, solver=cp.MOSEK):
     features = self.construct_features(prob_idx)
     inpt = Variable(torch.from_numpy(features)).float().cuda()
     scores = self.model_classifier(inpt).cpu().detach().numpy()[:]
@@ -279,20 +285,21 @@ class Optimizer():
         if v[0] == idx:
           y_guesses[ii] = v[1:]
 
-    prob_success, cost = False, np.Inf
+    prob_success, cost, solve_time, n_evals = False, np.Inf, np.Inf, len(y_guesses)
     for ii,idx in enumerate(ind_max):
       y_guess = y_guesses[ii]
-      prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
+      prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
+      n_evals = ii+1
       if prob_success:
         prob_success = True
         break
-    return prob_success, cost
+    return prob_success, cost, solve_time, n_evals
 
-  def solve_with_regressor(self, prob_idx):
+  def solve_with_regressor(self, prob_idx, solver=cp.MOSEK):
     features = self.construct_features(prob_idx)
     inpt = Variable(torch.from_numpy(features)).float().cuda()
     out = self.model_regressor(inpt).cpu().detach()
     y_guess = Sigmoid()(out).round().numpy()[:]
 
-    prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
-    return prob_success, cost
+    prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
+    return prob_success, cost, solve_time

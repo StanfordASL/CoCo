@@ -317,7 +317,7 @@ class FreeFlyer(Optimizer):
         self.features[self.n_obs*ii+ii_obs] = feature 
         self.labels[self.n_obs*ii+ii_obs] = label
 
-  def solve_with_classifier(self, prob_idx, max_evals=16):
+  def solve_with_classifier(self, prob_idx, max_evals=16, solver=cp.MOSEK):
     y_guesses = np.zeros((self.n_evals**self.n_obs, self.n_y), dtype=int)
 
     # Compute forward pass for each obstacle and save the top
@@ -325,21 +325,28 @@ class FreeFlyer(Optimizer):
     common_features = self.construct_features(prob_idx)
     ind_max = np.zeros((self.n_obs, self.n_evals), dtype=int)
     for ii_obs in range(self.n_obs):
-      features= np.zeros(self.n_obs)
+      # construct one-hot encoding
+      features = np.zeros(self.n_obs)
       features[ii_obs] = 1
+
+      # append one-hot encoding with common features
       features = np.hstack((features, common_features))
 
       inpt = Variable(torch.from_numpy(features)).float().cuda()
       scores = self.model_classifier(inpt).cpu().detach().numpy()[:]
+
+      # ii_obs'th row of ind_max contains top scoring indices for that obstacle
       ind_max[ii_obs] = np.argsort(scores)[-self.n_evals:][::-1]
 
     # Loop through strategy dictionary once
-    # Save i'th stratey in obs_strats dictionary
+    # Save ii'th stratey in obs_strats dictionary
     obs_strats = {}
     uniq_idxs = np.unique(ind_max)
     for k,v in self.training_labels.items():
       for ii,idx in enumerate(uniq_idxs):
+        # first index of training label is that strategy's idx
         if v[0] == idx:
+          # remainder of training label is that strategy's binary pin
           obs_strats[idx] = v[1:]
       if len(obs_strats) == uniq_idxs.size:
         # All strategies found 
@@ -349,28 +356,31 @@ class FreeFlyer(Optimizer):
     vv = [np.arange(0,self.n_evals) for _ in range(self.n_obs)]
     strategy_tuples = itertools.product(*vv)
 
-    prob_success, cost = False, np.Inf
+    prob_success, cost, total_time = False, np.Inf, 0.
     for ii, str_tuple in enumerate(strategy_tuples):
       if ii >= max_evals:
         break
       y_guess = -np.ones((4*self.n_obs, self.N-1))
       for ii_obs in range(self.n_obs):
+        # rows of ind_max correspond to ii_obs, column to desired strategy
         y_obs = obs_strats[ind_max[ii_obs, str_tuple[ii_obs]]]
         y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.N-1))
 
       if (y_guess < 0).any():
         print("Strategy was not correctly found!")
-        return
+        return False, np.Inf
 
       y_guess = np.reshape(y_guess, (y_guess.size))
-      prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
+      prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
+
+      total_time += solve_time
       if prob_success:
         prob_success = True
         break
 
-    return prob_success, cost
+    return prob_success, cost, total_time
 
-  def solve_with_regressor(self, prob_idx):
+  def solve_with_regressor(self, prob_idx, solver=cp.MOSEK):
     y_guess = np.zeros((4*self.n_obs, self.N-1), dtype=int)
     common_features = self.construct_features(prob_idx)
     for ii_obs in range(self.n_obs):
@@ -383,5 +393,5 @@ class FreeFlyer(Optimizer):
       out = Sigmoid()(out).round().numpy()[:]
       y_guess[4*ii_obs:4*(ii_obs+1), :] = np.reshape(out, (4, self.N-1))
 
-    prob_success, cost = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=cp.MOSEK)
-    return prob_success, cost
+    prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
+    return prob_success, cost, solve_time
