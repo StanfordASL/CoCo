@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
+#sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
 
 import pdb
 import mosek
@@ -10,7 +10,7 @@ import numpy as np
 import pdb
 import h5py
 
-from models import FFNet, BnBCNN
+from pytorch.models import FFNet, BnBCNN
 import time
 import random
 import string
