@@ -152,22 +152,22 @@ class FreeFlyer(Optimizer):
       for jj in range(self.n):
         cons += [self.posmin[jj] - x[jj,kk] <= 0]
         cons += [x[jj,kk] - self.posmax[jj] <= 0]
-    
+
     # Velocity constraints
     for kk in range(self.N):
       for jj in range(self.n):
         cons += [self.velmin - x[self.n+jj,kk] <= 0]
         cons += [x[self.n+jj,kk] - self.velmax <= 0]
-        
+
     # Control constraints
     for kk in range(self.N-1):
       cons += [cp.norm(u[:,kk]) <= self.umax]
-    
+
     lqr_cost = 0.
     # l2-norm of lqr_cost
     for kk in range(self.N):
       lqr_cost += cp.quad_form(x[:,kk]-xg, self.Q)
-    
+
     for kk in range(self.N-1):
       lqr_cost += cp.quad_form(u[:,kk], self.R)
 
@@ -272,7 +272,7 @@ class FreeFlyer(Optimizer):
               curr_violations.append(4*self.n_obs*i_t + yvar_max)
       violations.append(curr_violations)
     return violations
-  
+
   def construct_features(self, prob_idx):
     feature_vec = np.array([])
     x0, xg = self.X0[:,prob_idx], self.Xg[:,prob_idx]
@@ -299,6 +299,7 @@ class FreeFlyer(Optimizer):
     self.n_strategies = 0
 
     for ii in range(n_training_probs):
+      common_features = self.construct_features(ii)
       violations = self.which_M(ii)
       Y = self.Y[:,:,ii]
       for ii_obs, obs_strat in enumerate(violations):
@@ -310,9 +311,13 @@ class FreeFlyer(Optimizer):
         else:
           label = self.strategy_dict[tuple(obs_strat)] 
 
+        # construct one-hot encoding
         feature = np.zeros(self.n_obs)
         feature[ii_obs] = 1
-        feature = np.hstack((feature, self.construct_features(ii)))
+
+        # append one-hot encoding with common features
+        feature = np.hstack((feature, common_features))
+
         self.training_labels[tuple(feature)] = self.strategy_dict[tuple(obs_strat)]
         self.features[self.n_obs*ii+ii_obs] = feature 
         self.labels[self.n_obs*ii+ii_obs] = label
@@ -354,12 +359,20 @@ class FreeFlyer(Optimizer):
 
     # Generate Cartesian product of strategy combinations
     vv = [np.arange(0,self.n_evals) for _ in range(self.n_obs)]
-    strategy_tuples = itertools.product(*vv)
+    strategy_tuples = list(itertools.product(*vv))
+
+    # Sample from candidate strategy tuples based on "better" combinations
+    probs_str = [1./(np.sum(st)+1.) for st in strategy_tuples]  # lower sum(st) values --> better
+    probs_str = probs_str / np.sum(probs_str)
+    str_idxs = np.random.choice(np.arange(0,len(strategy_tuples)), max_evals, p=probs_str)
+    if 0 in str_idxs:
+      str_idxs = np.unique(np.insert(str_idxs, 0, 0))
+    else:
+      str_idxs = np.insert(str_idxs, 0, 0)[:-1]
+    strategy_tuples = [strategy_tuples[ii] for ii in str_idxs]
 
     prob_success, cost, total_time, n_evals = False, np.Inf, 0., max_evals
     for ii, str_tuple in enumerate(strategy_tuples):
-      if ii >= max_evals:
-        break
       y_guess = -np.ones((4*self.n_obs, self.N-1))
       for ii_obs in range(self.n_obs):
         # rows of ind_max correspond to ii_obs, column to desired strategy
@@ -368,7 +381,7 @@ class FreeFlyer(Optimizer):
 
       if (y_guess < 0).any():
         print("Strategy was not correctly found!")
-        return False, np.Inf
+        return False, np.Inf, total_time, n_evals
 
       y_guess = np.reshape(y_guess, (y_guess.size))
       prob_success, cost, solve_time = self.solve_mlopt_prob_with_idx(prob_idx, y_guess, solver=solver)
@@ -376,7 +389,6 @@ class FreeFlyer(Optimizer):
       total_time += solve_time
       n_evals = ii+1
       if prob_success:
-        prob_success = True
         break
 
     return prob_success, cost, total_time, n_evals
