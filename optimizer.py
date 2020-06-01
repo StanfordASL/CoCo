@@ -109,6 +109,16 @@ class Optimizer():
       self.features[ii] = features
       self.labels[ii] =  label
 
+  def load_classifier_network(self, fn_classifier_model):
+    if os.path.exists(fn_classifier_model):
+      print('Loading presaved classifier model from {}'.format(fn_classifier_model))
+      self.model_classifier.load_state_dict(torch.load(fn_classifier_model))
+
+  def load_regressor_network(self, fn_regressor_model):
+    if os.path.exists(fn_regressor_model):
+      print('Loading presaved regressor model from {}'.format(fn_regressor_model))
+      self.model_regressor.load_state_dict(torch.load(fn_regressor_model))
+
   def setup_network(self, depth=3, neurons=32): 
     ff_shape = [self.n_features]
     for ii in range(depth):
@@ -122,12 +132,8 @@ class Optimizer():
 
     self.model_regressor = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
 
-    if os.path.exists(self.fn_classifier_model):
-      print('Loading presaved classifier model from {}'.format(self.fn_classifier_model))
-      self.model_classifier.load_state_dict(torch.load(self.fn_classifier_model))
-    if os.path.exists(self.fn_regressor_model):
-      print('Loading presaved regressor model from {}'.format(self.fn_regressor_model))
-      self.model_regressor.load_state_dict(torch.load(self.fn_regressor_model))
+    self.load_classifier_network(self.fn_classifier_model)
+    self.load_regressor_network(self.fn_regressor_model)
 
   def train_regressor(self):
     # grab training params
@@ -293,7 +299,6 @@ class Optimizer():
       total_time += solve_time
       n_evals = ii+1
       if prob_success:
-        prob_success = True
         break
     return prob_success, cost, total_time, n_evals
 
