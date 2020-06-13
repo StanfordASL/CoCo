@@ -1,4 +1,5 @@
 import numpy as np
+from .halton_sampling import generate_halton_samples
 
 def skew(v):
   out = np.array([[0., -v[2], v[1]], [v[2], 0., -v[0]], [-v[1], v[0], 0.]])
@@ -59,8 +60,7 @@ def sample_points(N_v, N_h, h=2, r=1, e_noise=0.05, rng=92):
   TH = np.kron(th, np.ones(N_v))
   U = np.kron(np.ones(int(N_h/2)), np.hstack((u, u[::-1])))
 
-  np.random.seed(rng)
-  randfloat = np.random.rand(3,N)
+  randfloat = generate_halton_samples(3, N)
 
   x = np.sqrt(1 - U**2)*np.cos(TH) + e_noise*randfloat[0,:]
   y = np.sqrt(1 - U**2)*np.sin(TH) + e_noise*randfloat[1,:]
@@ -112,7 +112,7 @@ def manipulation_prob(N_v, N_h, num_grasps, w, h, r, mu):
 
   for ii in range(12):
     # generate wrench in basis dir.
-      cons += [cp.sum([G[jj]@f[jj][:,ii] for jj in range(N)]) == a[ii]*V[:,ii]]
+    cons += [cp.sum([G[jj]@f[jj][:,ii] for jj in range(N)]) == a[ii]*V[:,ii]]
 
     # friction cone
     for jj in range(N):
@@ -125,3 +125,4 @@ def manipulation_prob(N_v, N_h, num_grasps, w, h, r, mu):
   cons += [cp.sum(Y) <= num_grasps]
 
   prob = cp.Problem(cp.Maximize(obj), cons)
+  return prob
