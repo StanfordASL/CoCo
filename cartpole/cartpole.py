@@ -186,7 +186,10 @@ class Cartpole(Problem):
         """
         #set cvxpy parameters to their values
         x0, xg = params
-        self.bin_prob_parameters['x0'] = x0; self.bin_prob_parameters['xg']= xg
+        self.bin_prob_parameters['x0'].value = x0
+        self.bin_prob_parameters['xg'].value = xg
+        
+        ##TODO(pculbert): allow different sets of params to vary.
         
         #solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
@@ -195,10 +198,101 @@ class Cartpole(Problem):
         solve_time = self.bin_prob.solver_stats.solve_time
         if self.bin_prob.status == 'optimal':
             prob_success = True
-            cost = self.mlopt_prob.value
+            cost = self.bin_prob.value
             
         return prob_success, cost, solve_time
         
     def solve_pinned(self, params, strat, solver=cp.MOSEK):
-        raise NotImplementedError
+        """High-level method to solve MICP with pinned params & integer values.
+        
+        Args:
+            params: list of numpy arrays, [x0, xg], which are the initial &
+                goal state for the current problem.
+            strat: numpy integer array, corresponding to integer values for the
+                desired strategy.
+            solver: cvxpy Solver object; defaults to Mosek.
+        """
+        #set cvxpy params to their values
+        x0, xg = params
+        self.mlopt_prob_parameters['x0'].value = x0
+        self.mlopt_prob_parameters['xg'].value = xg
+        self.mlopt_prob_parameters['y'].value = strat
+        
+        ##TODO(pculbert): allow different sets of params to vary.
+        
+        #solve problem with cvxpy
+        prob_success, cost, solve_time = False, np.Inf, np.Inf
+        self.mlopt_prob.solve(solver=solver)
+        
+        solve_time = self.mlopt_prob.solver_stats.solve_time
+        if self.mlopt_prob.status == 'optimal':
+            prob_success = True
+            cost = self.mlopt_prob.value
+            
+        return prob_success, cost, solve_time
+    
+    def which_M(self, x, u eq_tol=1e-5, ineq_tol=1e-5):
+        """Method to check which big-M constraints are active.
+        
+        Args:
+            x: numpy array of size [self.n, self.N], state trajectory.
+            u: numpy array of size [self.m, self.N], input trajectory.
+            eq_tol: tolerance for equality constraints, default of 1e-5.
+            ineq_tol : tolerance for ineq. constraints, default of 1e-5.
+            
+        Returns:
+            violations: list of which logical constraints are violated.
+        """
+
+        violations = []
+        sc = u[1:,:]
+
+        for kk in range(self.N-1):
+            for jj in range(2):
+                # Check for when Eq. (27) is strict equality
+                if jj == 0:
+                    d_k = -x[0,kk] + self.l*x[1,kk] - self.dist
+                    dd_k = -x[2,kk] + self.l*x[3,kk]
+                else:
+                    d_k = x[0,kk] - self.l*x[1,kk] - self.dist
+                    dd_k = x[2,kk] - self.l*x[3,kk]
+                if abs(sc[jj,kk]-self.kappa*d_k-self.nu*dd_k) <= eq_tol:
+                    violations.append(4*kk + 2*jj)
+                    violations.append(4*kk + 2*jj + 1)
+
+        return violations
+
+    def construct_features(self, params, prob_features):
+        """Helper function to construct feature vector from parameter vector.
+        
+        Args:
+            params: list [x0, xg] of numpy arrays for initial/goal states.
+            prob_features: list of strings, desired features for classifier.
+        """
+        feature_vec = np.array([])
+        x0, xg = params
+
+        for feature in prob_features:
+            if feature == "X0":
+                feature_vec = np.hstack((feature_vec, x0))
+            elif feature == "Xg":
+                feature_vec = np.hstack((feature_vec, xg))
+            elif feature == "delta2_0":
+                d_0 = -x0[0] + self.l*x0[1] - self.dist
+                feature_vec = np.hstack((feature_vec, d_0))
+            elif feature == "delta3_0":
+                d_0 = x0[0] - self.l*x0[1] - self.dist
+                feature_vec = np.hstack((feature_vec, d_0))
+            elif feature == "delta2_g":
+                d_g = -xg[0] + self.l*xg[1] - self.dist
+                feature_vec = np.hstack((feature_vec, d_g))
+            elif feature == "delta3_g":
+                d_g = xg[0] - self.l*xg[1] - self.dist
+                feature_vec = np.hstack((feature_vec, d_g))
+            elif feature == "dist_to_goal":
+                feature_vec = np.hstack((feature_vec, np.linalg.norm(x0-xg)))
+            else:
+                print('Feature {} is unknown'.format(feature))
+        return feature_vec
+
         
