@@ -1,3 +1,4 @@
+import cvxpy as cp
 import numpy as np
 from .halton_sampling import generate_halton_samples
 
