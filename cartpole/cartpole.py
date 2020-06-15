@@ -3,35 +3,43 @@ import cvxpy as cp
 import pickle
 import numpy as np
 
+#ugly path hack :\
+import sys
+sys.path.append('..')
+
 from core import Problem
 
 class Cartpole(Problem):
     """Class to setup + solve cartpole problems."""
     
-    def __init__(self, solver=cp.MOSEK):
+    def __init__(self, config=None, solver=cp.MOSEK):
         """Constructor for Cartpole class.
         
         Args:
+            config: full path to config file.
             solver: solver object to be used by cvxpy
         """
         super().__init__()
-        self.init_problem()
-        
-    def init_problem(self):
-        #setup problem params
-        self.n = 4; self.m = 3 
         
         ##TODO(pculbert): allow different sets of params to vary.
+        if config is None: #use default config
+            relative_path = os.path.dirname(os.path.abspath(__file__))
+            config = relative_path + '/config/default.p'
         
-        relative_path = os.path.dirname(os.path.abspath(__file__))
-        infile = open(relative_path+"/cartpole_params.p","rb")
+        infile = open(config,"rb")
+        _, prob_params, self.sampled_params = pickle.load(infile)
+        infile.close()
+        self.init_problem(prob_params)
+        
+    def init_problem(self,prob_params):
+        #setup problem params
+        self.n = 4; self.m = 3 
+
         self.N, self.Ak, self.Bk, self.Q, self.R, self.x_min, self.x_max, \
             self.uc_min, self.uc_max, self.sc_min, self.sc_max, \
             self.delta_min, self.delta_max, self.ddelta_min, self.ddelta_max, \
             self.dh, self.g, self.l, self.mc, self.mp, self.kappa, \
-            self.nu, self.dist = pickle.load(infile)
-        
-        infile.close()
+            self.nu, self.dist = prob_params
         
         self.init_bin_problem()
         self.init_mlopt_problem()
@@ -44,6 +52,7 @@ class Cartpole(Problem):
         u = cp.Variable((self.m, self.N-1))
         sc = u[1:,:]
         y = cp.Variable((4, self.N-1), boolean=True)
+        self.bin_prob_variables = {'x': x, 'u' : u, 'y' : y}
 
         x0 = cp.Parameter(self.n)
         xg = cp.Parameter(self.n)
@@ -180,42 +189,45 @@ class Cartpole(Problem):
         """High-level method to solve parameterized MICP.
         
         Args:
-            params: list of numpy arrays, [x0, xg], which are the initial &
-                goal state for the current problem.
+            params: Dict of param values; keys are self.sampled_params,
+                values are numpy arrays of specific param values.
             solver: cvxpy Solver object; defaults to Mosek.
         """
         #set cvxpy parameters to their values
-        x0, xg = params
-        self.bin_prob_parameters['x0'].value = x0
-        self.bin_prob_parameters['xg'].value = xg
+        for p in self.sampled_params:
+            self.bin_prob_parameters[p].value = params[p]
         
         ##TODO(pculbert): allow different sets of params to vary.
         
         #solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
+        x_star, u_star, y_star = None, None, None
         self.bin_prob.solve(solver=solver)
         
         solve_time = self.bin_prob.solver_stats.solve_time
         if self.bin_prob.status == 'optimal':
             prob_success = True
             cost = self.bin_prob.value
+            x_star = self.bin_prob_variables['x'].value
+            u_star = self.bin_prob_variables['u'].value
+            y_star = self.bin_prob_variables['y'].value.astype(int)
             
-        return prob_success, cost, solve_time
+        return prob_success, cost, solve_time, (x_star, u_star, y_star)
         
     def solve_pinned(self, params, strat, solver=cp.MOSEK):
         """High-level method to solve MICP with pinned params & integer values.
         
         Args:
-            params: list of numpy arrays, [x0, xg], which are the initial &
-                goal state for the current problem.
+            params: Dict of param values; keys are self.sampled_params,
+                values are numpy arrays of specific param values.
             strat: numpy integer array, corresponding to integer values for the
                 desired strategy.
             solver: cvxpy Solver object; defaults to Mosek.
         """
         #set cvxpy params to their values
-        x0, xg = params
-        self.mlopt_prob_parameters['x0'].value = x0
-        self.mlopt_prob_parameters['xg'].value = xg
+        for p in self.sampled_params:
+            self.mlopt_prob_parameters[p].value = params[p]
+        
         self.mlopt_prob_parameters['y'].value = strat
         
         ##TODO(pculbert): allow different sets of params to vary.
@@ -231,7 +243,7 @@ class Cartpole(Problem):
             
         return prob_success, cost, solve_time
     
-    def which_M(self, x, u eq_tol=1e-5, ineq_tol=1e-5):
+    def which_M(self, x, u, eq_tol=1e-5, ineq_tol=1e-5):
         """Method to check which big-M constraints are active.
         
         Args:
@@ -266,11 +278,13 @@ class Cartpole(Problem):
         """Helper function to construct feature vector from parameter vector.
         
         Args:
-            params: list [x0, xg] of numpy arrays for initial/goal states.
+            params: Dict of param values; keys are self.sampled_params,
+                values are numpy arrays of specific param values.
             prob_features: list of strings, desired features for classifier.
         """
         feature_vec = np.array([])
-        x0, xg = params
+        x0, xg = params['x0'], params['xg'] 
+        ##TODO(pculbert): make this not hardcoded
 
         for feature in prob_features:
             if feature == "X0":
