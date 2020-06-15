@@ -1,8 +1,8 @@
 import os
 import sys
 
-#sys.path.insert(1, os.environ['MLOPT'])
-#sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
+sys.path.insert(1, os.environ['MLOPT'])
+sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
 
 from optimizer import Optimizer
 from pytorch.models import FFNet, BnBCNN
@@ -44,8 +44,7 @@ class Cartpole(Optimizer):
     self.node_count = np.array([], dtype=int) 
 
     for ii in range(n_files):
-      #fn = os.path.join(os.environ["MLOPT"], system, 'data/testdata{}.h5'.format(ii+1))
-      fn = os.path.join(os.getcwd(), "mlopt-micp/", system, 'data/testdata{}.h5'.format(ii+1))
+      fn = os.path.join(os.environ["MLOPT"], system, 'data/testdata{}.h5'.format(ii+1))
       f = h5py.File(fn, 'r')
       if ii == 0:
         self.N = f['N'][()]
