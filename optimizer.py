@@ -4,6 +4,7 @@ import sys
 
 import pdb
 import mosek
+import gurobipy
 import cvxpy as cp
 import numpy as np
 
@@ -44,6 +45,8 @@ class Optimizer():
       msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
 
       self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
+    elif solver == cp.GUROBI:
+      self.bin_prob.solve(solver=solver)
 
     prob_success, cost, solve_time = False, np.Inf, np.Inf
     solve_time = self.bin_prob.solver_stats.solve_time
