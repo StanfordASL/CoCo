@@ -2,11 +2,13 @@
 This repository contains code for [Learning Mixed-Integer Convex Optimization Strategies for Robot Planning and Control](https://arxiv.org/abs/2004.03736) by Abhishek Cauligi\*, Preston Culbertson\*, Bartolomeo Stellato, Dimitris Bertsimas, Mac Schwager, and Marco Pavone (\* denotes equal contribution).
 
 ## Installation ##
-This repository uses Julia-1.2 for the construction of the optimization problems and PyTorch for training the neural network models. The necessary Python packages can be installed by running the following script.
+This repository uses cvxpy for the construction of the optimization problems and PyTorch for training the neural network models. The necessary Python packages can be installed by running the following script.
 ```
 pip3 install -r requirements.txt
 ```
-We also use the [Gurobi](https://github.com/JuliaOpt/Gurobi.jl) and [Mosek](https://github.com/JuliaOpt/Mosek.jl) commercial solvers for solving our training dataset offline (found in `{system}/data_collection.ipynb`).
+We also use the [Gurobi][https://support.gurobi.com/hc/en-us/community/posts/360046430451/comments/360005981732] and [Mosek][https://www.mosek.com/downloads/] commercial solvers for solving our problems.
+
+Further, define an environment variable `MLOPT` that points to the working directory where this packagee is installed.
 
 ## Useage ##
 This repo contains examples for three systems in robot planning and control:
