@@ -16,7 +16,7 @@ class Cartpole(Problem):
         """Constructor for Cartpole class.
         
         Args:
-            config: full path to config file.
+            config: full path to config file. if None, load default config.
             solver: solver object to be used by cvxpy
         """
         super().__init__()
@@ -26,9 +26,9 @@ class Cartpole(Problem):
             relative_path = os.path.dirname(os.path.abspath(__file__))
             config = relative_path + '/config/default.p'
         
-        infile = open(config,"rb")
-        _, prob_params, self.sampled_params = pickle.load(infile)
-        infile.close()
+        config_file = open(config,"rb")
+        _, prob_params, self.sampled_params = pickle.load(config_file)
+        config_file.close()
         self.init_problem(prob_params)
         
     def init_problem(self,prob_params):
