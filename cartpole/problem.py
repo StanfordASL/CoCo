@@ -11,6 +11,7 @@ import pdb
 
 import osqp
 import mosek
+import gurobipy
 import cvxpy as cp
 import numpy as np
 

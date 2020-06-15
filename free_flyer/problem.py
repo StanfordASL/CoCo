@@ -9,6 +9,7 @@ from models import FFNet, BnBCNN
 
 import pdb
 import mosek
+import gurobipy
 import cvxpy as cp
 import numpy as np
 
