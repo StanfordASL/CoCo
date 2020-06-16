@@ -3,7 +3,7 @@ import cvxpy as cp
 import pickle
 import numpy as np
 
-#ugly path hack :\
+# ugly path hack :\
 import sys
 sys.path.append('..')
 
@@ -11,28 +11,28 @@ from core import Problem
 
 class Cartpole(Problem):
     """Class to setup + solve cartpole problems."""
-    
-    def __init__(self, config=None, solver=cp.MOSEK):
+
+    def __init__(self, config=None, solver=cp.GUROBI):
         """Constructor for Cartpole class.
-        
+
         Args:
             config: full path to config file. if None, load default config.
             solver: solver object to be used by cvxpy
         """
         super().__init__()
-        
-        ##TODO(pculbert): allow different sets of params to vary.
+
+        ## TODO(pculbertson): allow different sets of params to vary.
         if config is None: #use default config
             relative_path = os.path.dirname(os.path.abspath(__file__))
             config = relative_path + '/config/default.p'
-        
+
         config_file = open(config,"rb")
         _, prob_params, self.sampled_params = pickle.load(config_file)
         config_file.close()
         self.init_problem(prob_params)
-        
+
     def init_problem(self,prob_params):
-        #setup problem params
+        # setup problem params
         self.n = 4; self.m = 3 
 
         self.N, self.Ak, self.Bk, self.Q, self.R, self.x_min, self.x_max, \
@@ -40,12 +40,11 @@ class Cartpole(Problem):
             self.delta_min, self.delta_max, self.ddelta_min, self.ddelta_max, \
             self.dh, self.g, self.l, self.mc, self.mp, self.kappa, \
             self.nu, self.dist = prob_params
-        
+
         self.init_bin_problem()
         self.init_mlopt_problem()
-        
+
     def init_bin_problem(self):
-        
         cons = []
 
         x = cp.Variable((self.n,self.N))
@@ -184,8 +183,8 @@ class Cartpole(Problem):
             lqr_cost += cp.quad_form(u[:,kk],self.R)
 
         self.mlopt_prob = cp.Problem(cp.Minimize(lqr_cost), cons)
-        
-    def solve_micp(self, params, solver=cp.MOSEK):
+
+    def solve_micp(self, params, solver=cp.GUROBI):
         """High-level method to solve parameterized MICP.
         
         Args:
@@ -193,13 +192,13 @@ class Cartpole(Problem):
                 values are numpy arrays of specific param values.
             solver: cvxpy Solver object; defaults to Mosek.
         """
-        #set cvxpy parameters to their values
+        # set cvxpy parameters to their values
         for p in self.sampled_params:
             self.bin_prob_parameters[p].value = params[p]
         
-        ##TODO(pculbert): allow different sets of params to vary.
+        ## TODO(pculbertson): allow different sets of params to vary.
         
-        #solve problem with cvxpy
+        # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
         x_star, u_star, y_star = None, None, None
         self.bin_prob.solve(solver=solver)
@@ -214,7 +213,7 @@ class Cartpole(Problem):
             
         return prob_success, cost, solve_time, (x_star, u_star, y_star)
         
-    def solve_pinned(self, params, strat, solver=cp.MOSEK):
+    def solve_pinned(self, params, strat, solver=cp.GUROBI):
         """High-level method to solve MICP with pinned params & integer values.
         
         Args:
@@ -224,25 +223,25 @@ class Cartpole(Problem):
                 desired strategy.
             solver: cvxpy Solver object; defaults to Mosek.
         """
-        #set cvxpy params to their values
+        # set cvxpy params to their values
         for p in self.sampled_params:
             self.mlopt_prob_parameters[p].value = params[p]
-        
+
         self.mlopt_prob_parameters['y'].value = strat
-        
-        ##TODO(pculbert): allow different sets of params to vary.
-        
-        #solve problem with cvxpy
+
+        ## TODO(pculbertson): allow different sets of params to vary.
+
+        # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
         self.mlopt_prob.solve(solver=solver)
-        
+
         solve_time = self.mlopt_prob.solver_stats.solve_time
         if self.mlopt_prob.status == 'optimal':
             prob_success = True
             cost = self.mlopt_prob.value
-            
+
         return prob_success, cost, solve_time
-    
+
     def which_M(self, x, u, eq_tol=1e-5, ineq_tol=1e-5):
         """Method to check which big-M constraints are active.
         
@@ -284,7 +283,7 @@ class Cartpole(Problem):
         """
         feature_vec = np.array([])
         x0, xg = params['x0'], params['xg'] 
-        ##TODO(pculbert): make this not hardcoded
+        ## TODO(pculbertson): make this not hardcoded
 
         for feature in prob_features:
             if feature == "X0":
@@ -308,5 +307,3 @@ class Cartpole(Problem):
             else:
                 print('Feature {} is unknown'.format(feature))
         return feature_vec
-
-        
