@@ -282,6 +282,29 @@ class FreeFlyer(Problem):
             feature_vec = np.hstack((feature_vec, np.reshape(obstacles, (4*self.n_obs))))
           elif feature == "obstacles_map":
             print("obstacles_map feature not implemented yet!")
+            continue
+            W_H_ratio = posmax[0] / posmax[1]
+            H = 32
+            W = int(W_H_ratio * H)
+
+            table_img = np.ones((3,H,W))
+
+            # Draw in obstacle of interest last
+            obs_ll = [ii for ii in range(n_obs) if ii is not obs_ii]
+            obs_ll.append(obs_ii)
+
+            for ll in obs_ll:
+                obs = obstacles[ll]
+                row_range = range(int(float(obs[2])/posmax[1]*H), int(float(obs[3])/posmax[1]*H))
+                col_range = range(int(float(obs[0])/posmax[0]*W), int(float(obs[1])/posmax[0]*W))
+                row_range = range(np.maximum(row_range[0],0), np.minimum(row_range[-1],H))
+                col_range = range(np.maximum(col_range[0],0), np.minimum(col_range[-1],W))
+
+                if ll is obs_ii:
+                    table_img[:, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 1
+                    table_img[:2, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0
+                else:
+                    table_img[1:, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0
           else:
             print('Feature {} is unknown'.format(feature))
         return feature_vec
