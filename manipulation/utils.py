@@ -1,6 +1,6 @@
 import cvxpy as cp
 import numpy as np
-from .halton_sampling import generate_halton_samples
+from halton_sampling import generate_halton_samples
 
 def skew(v):
   out = np.array([[0., -v[2], v[1]], [v[2], 0., -v[0]], [-v[1], v[0], 0.]])
@@ -78,52 +78,3 @@ def sample_points(N_v, N_h, h=2, r=1, e_noise=0.05, rng=92):
     G.append(Gr)
     p.append(p_i)
   return G, p
-
-def manipulation_prob(N_v, N_h, num_grasps, w, h, r, mu):
-  # Implementation of manipulation system with contacts From "Fast Computation of Optimal Contact Forces, Boyd & Wegbreit (2007)"
-
-  N = N_v * N_h # total number of points
-
-  # sample points on cylinder
-  Gr, p = sample_points(N_v, N_h, h, r)
-
-  # Grasp optimization w.r.t. task specification
-  V = np.hstack((np.eye(6), -np.eye(6)))
-
-  # max normal force
-  F_max = 1.
-
-  # choose points
-  G, p = sample_points(N_v, N_h, h, r, 0.02)
-
-  # setup problem
-  Y = cp.Variable(N, boolean=True) # indicator of if point is used
-  a = cp.Variable(12) # magnitudes of achievable wrenches in each basis dir.
-
-  # contact forces; one for each point, for each basis direction
-  f = [cp.Variable((3,12)) for _ in range(N)]
-
-  # maximize weighted polyhedron volume
-  obj = w.T @ a
-
-  cons = []
-
-  # ray coefficients must be positive
-  cons += [a >= 0.]
-
-  for ii in range(12):
-    # generate wrench in basis dir.
-    cons += [cp.sum([G[jj]@f[jj][:,ii] for jj in range(N)]) == a[ii]*V[:,ii]]
-
-    # friction cone
-    for jj in range(N):
-      cons += [cp.norm(f[jj][:2,ii]) <= mu*f[jj][2,ii]]
-
-    for jj in range(N):
-      cons += [f[jj][2,ii] <= F_max*Y[jj]]
-
-  # limit number of chosen grasps
-  cons += [cp.sum(Y) <= num_grasps]
-
-  prob = cp.Problem(cp.Maximize(obj), cons)
-  return prob
