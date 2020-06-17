@@ -2,6 +2,7 @@ import os
 import cvxpy as cp
 import pickle
 import numpy as np
+import pdb
 
 # ugly path hack :\
 import sys
@@ -12,7 +13,7 @@ from core import Problem
 class FreeFlyer(Problem):
     """Class to setup + solve free-flyer problems."""
 
-    def __init__(self, config=None, solver=cp.GUROBI):
+    def __init__(self, config=None, solver=cp.MOSEK):
         """Constructor for FreeFlyer class.
 
         Args:
@@ -36,14 +37,6 @@ class FreeFlyer(Problem):
         self.n = 2; self.m = 2
 
         self.N, self.Ak, self.Bk, self.Q, self.R, self.n_obs, \
-            self.x_min, self.x_max, \
-            self.uc_min, self.uc_max, \
-            self.sc_min, self.sc_max, \
-            self.delta_min, self.delta_max, self.ddelta_min, self.ddelta_max, \
-            self.dh, self.g, self.l, self.mc, self.mp, self.kappa, \
-            self.nu, self.dist = prob_params
-
-        self.N, self.Ak, self.Bk, self.Q, self.R, \
           self.posmin, self.posmax, self.velmin, self.velmax, \
           self.umin, self.umax = prob_params
 
@@ -178,7 +171,7 @@ class FreeFlyer(Problem):
 
         self.mlopt_prob = cp.Problem(cp.Minimize(lqr_cost), cons)
 
-    def solve_micp(self, params, solver=cp.GUROBI):
+    def solve_micp(self, params, solver=cp.MOSEK):
         """High-level method to solve parameterized MICP.
         
         Args:
@@ -207,7 +200,7 @@ class FreeFlyer(Problem):
             
         return prob_success, cost, solve_time, (x_star, u_star, y_star)
 
-    def solve_pinned(self, params, strat, solver=cp.GUROBI):
+    def solve_pinned(self, params, strat, solver=cp.MOSEK):
         """High-level method to solve MICP with pinned params & integer values.
         
         Args:
