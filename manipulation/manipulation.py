@@ -2,13 +2,11 @@ import os
 import cvxpy as cp
 import pickle
 import numpy as np
+import sys
+
+sys.path.insert(1, os.environ['MLOPT'])
 
 from utils import sample_points 
-
-# ugly path hack :\
-import sys
-sys.path.append('..')
-
 from core import Problem
 
 class Manipulation(Problem):
