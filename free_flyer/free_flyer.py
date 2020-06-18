@@ -3,10 +3,9 @@ import cvxpy as cp
 import pickle
 import numpy as np
 import pdb
-
-# ugly path hack :\
 import sys
-sys.path.append('..')
+
+sys.path.insert(1, os.environ['MLOPT'])
 
 from core import Problem
 

@@ -2,10 +2,9 @@ import os
 import cvxpy as cp
 import pickle
 import numpy as np
-
-# ugly path hack :\
 import sys
-sys.path.append('..')
+
+sys.path.insert(1, os.environ['MLOPT'])
 
 from core import Problem
 
@@ -286,9 +285,9 @@ class Cartpole(Problem):
         ## TODO(pculbertson): make this not hardcoded
 
         for feature in prob_features:
-            if feature == "X0":
+            if feature == "x0":
                 feature_vec = np.hstack((feature_vec, x0))
-            elif feature == "Xg":
+            elif feature == "xg":
                 feature_vec = np.hstack((feature_vec, xg))
             elif feature == "delta2_0":
                 d_0 = -x0[0] + self.l*x0[1] - self.dist

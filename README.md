@@ -4,6 +4,7 @@ This repository contains code for [Learning Mixed-Integer Convex Optimization St
 ## Installation ##
 This repository uses cvxpy for the construction of the optimization problems and PyTorch for training the neural network models. The necessary Python packages can be installed by running the following script.
 ```
+pip3 install -r requirements_cython.txt
 pip3 install -r requirements.txt
 ```
 We also use the [Gurobi][https://support.gurobi.com/hc/en-us/community/posts/360046430451/comments/360005981732] and [Mosek][https://www.mosek.com/downloads/] commercial solvers for solving our problems.
