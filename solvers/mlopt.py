@@ -6,7 +6,6 @@ import pdb
 import time
 import random
 import sys
-
 import torch
 
 import torch.optim as optim
@@ -23,7 +22,7 @@ from pytorch.models import FFNet
 
 class MLOPT(Solver):
     def __init__(self, system, problem, prob_features, n_evals=10):
-        """Constructor for Cartpole class.
+        """Constructor for MLOPT class.
 
         Args:
             system: string for system name e.g. 'cartpole'
@@ -115,7 +114,7 @@ class MLOPT(Solver):
         model_fn = os.path.join(os.getcwd(), model_fn)
         self.model_fn = model_fn.format(self.system, now)
 
-    def load_classifier_network(self, fn_classifier_model):
+    def load_network(self, fn_classifier_model):
         if os.path.exists(fn_classifier_model):
             print('Loading presaved classifier model from {}'.format(fn_classifier_model))
             self.model.load_state_dict(torch.load(fn_classifier_model))
