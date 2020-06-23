@@ -3,6 +3,7 @@ import cvxpy as cp
 import pickle
 import numpy as np
 import sys
+import pdb
 
 sys.path.insert(1, os.environ['MLOPT'])
 
@@ -61,17 +62,17 @@ class Cartpole(Problem):
 
         # Dynamics constraints
         for kk in range(self.N-1):
-            cons += [x[:,kk+1] - (self.Ak @ x[:,kk] 
+            cons += [x[:,kk+1] - (self.Ak @ x[:,kk]
                 + self.Bk @ u[:,kk]) == np.zeros(self.n)]
 
         # State and control constraints
         for kk in range(self.N):
-            cons += [self.x_min - x[:,kk] <= np.zeros(self.n)] 
+            cons += [self.x_min - x[:,kk] <= np.zeros(self.n)]
             cons += [x[:,kk] - self.x_max <= np.zeros(self.n)]
 
         for kk in range(self.N-1):
             cons += [self.uc_min - u[0,kk] <= 0.]
-            cons += [u[0,kk] - self.uc_max <= 0]
+            cons += [u[0,kk] - self.uc_max <= 0.]
 
         # Binary variable constraints
         for kk in range(self.N-1):
@@ -97,7 +98,7 @@ class Cartpole(Problem):
                 cons += [self.kappa*d_k + self.nu*dd_k <= f_max*y_r]
 
                 # Eq. (27)
-                cons += [self.nu*dd_max*(y_l-1) <= 
+                cons += [self.nu*dd_max*(y_l-1) <=
                          sc[jj,kk] - self.kappa*d_k - self.nu*dd_k]
                 cons += [sc[jj,kk] - self.kappa*d_k - self.nu*dd_k <= 
                          f_min*(y_r-1)]
@@ -124,7 +125,7 @@ class Cartpole(Problem):
 
         x0 = cp.Parameter(self.n)
         xg = cp.Parameter(self.n)
-        y = cp.Parameter((4, self.N-1)) 
+        y = cp.Parameter((4, self.N-1))
         self.mlopt_prob_parameters = {'x0': x0, 'xg': xg, 'y': y}
 
         # Initial condition
@@ -132,16 +133,17 @@ class Cartpole(Problem):
 
         # Dynamics constraints
         for kk in range(self.N-1):
-            cons += [x[:,kk+1] - (self.Ak @ x[:,kk] + self.Bk @ u[:,kk]) == np.zeros(self.n)]
+            cons += [x[:,kk+1] - (self.Ak @ x[:,kk]
+                + self.Bk @ u[:,kk]) == np.zeros(self.n)]
 
         # State and control constraints
         for kk in range(self.N):
-            cons += [self.x_min - x[:,kk] <= np.zeros(self.n)] 
+            cons += [self.x_min - x[:,kk] <= np.zeros(self.n)]
             cons += [x[:,kk] - self.x_max <= np.zeros(self.n)]
 
         for kk in range(self.N-1):
             cons += [self.uc_min - u[0,kk] <= 0.]
-            cons += [u[0,kk] - self.uc_max <= 0]
+            cons += [u[0,kk] - self.uc_max <= 0.]
 
         # Binary variable constraints
         for kk in range(self.N-1):
@@ -167,19 +169,21 @@ class Cartpole(Problem):
                 cons += [self.kappa*d_k + self.nu*dd_k <= f_max*y_r]
 
                 # Eq. (27)
-                cons += [self.nu*dd_max*(y_l-1) <= sc[jj,kk] - self.kappa*d_k - self.nu*dd_k]
-                cons += [sc[jj,kk] - self.kappa*d_k - self.nu*dd_k <= f_min*(y_r-1)]
+                cons += [self.nu*dd_max*(y_l-1) <=
+                         sc[jj,kk] - self.kappa*d_k - self.nu*dd_k]
+                cons += [sc[jj,kk] - self.kappa*d_k - self.nu*dd_k <=
+                         f_min*(y_r-1)]
 
-                cons += [-sc[jj,kk] <= 0]
-                cons += [sc[jj,kk] <= f_max*y_l]
-                cons += [sc[jj,kk] <= f_max*y_r]
+            cons += [-sc[jj,kk] <= 0]
+            cons += [sc[jj,kk] <= f_max*y_l]
+            cons += [sc[jj,kk] <= f_max*y_r]
 
-        # LQR cost
-        lqr_cost = 0.
-        for kk in range(self.N):
-            lqr_cost += cp.quad_form(x[:,kk]-xg, self.Q)
-        for kk in range(self.N-1):
-            lqr_cost += cp.quad_form(u[:,kk],self.R)
+            # LQR cost
+            lqr_cost = 0.
+            for kk in range(self.N):
+                lqr_cost += cp.quad_form(x[:,kk]-xg, self.Q)
+            for kk in range(self.N-1):
+                lqr_cost += cp.quad_form(u[:,kk],self.R)
 
         self.mlopt_prob = cp.Problem(cp.Minimize(lqr_cost), cons)
 
@@ -238,6 +242,11 @@ class Cartpole(Problem):
         if self.mlopt_prob.status == 'optimal':
             prob_success = True
             cost = self.mlopt_prob.value
+
+        # Clear any saved params
+        for p in self.sampled_params:
+            self.mlopt_prob_parameters[p].value = None
+        self.mlopt_prob_parameters['y'].value = None
 
         return prob_success, cost, solve_time
 

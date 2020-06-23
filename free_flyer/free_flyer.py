@@ -226,6 +226,11 @@ class FreeFlyer(Problem):
             prob_success = True
             cost = self.mlopt_prob.value
 
+        # Clear any saved params
+        for p in self.sampled_params:
+            self.mlopt_prob_parameters[p].value = None
+        self.mlopt_prob_parameters['y'].value = None
+
         return prob_success, cost, solve_time
 
     def which_M(self, x, obstacles, eq_tol=1e-5, ineq_tol=1e-5):
