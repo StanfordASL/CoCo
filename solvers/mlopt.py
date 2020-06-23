@@ -207,7 +207,9 @@ class MLOPT(Solver):
         prob_success, cost, total_time, n_evals = False, np.Inf, 0., len(y_guesses)
         for ii,idx in enumerate(ind_max):
           y_guess = y_guesses[ii]
-          y_guess = np.reshape(y_guess, self.y_shape) 
+
+          # weirdly need to reshape in reverse order of cvxpy variable shape
+          y_guess = np.reshape(y_guess, self.y_shape[::-1]).T
 
           prob_success, cost, solve_time = self.problem.solve_pinned(prob_params, y_guess, solver)
 
