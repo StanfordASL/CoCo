@@ -186,17 +186,22 @@ class FreeFlyer(Problem):
         
         # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
-        x_star, u_star, y_star = None, None, None
+
         self.bin_prob.solve(solver=solver)
-        
         solve_time = self.bin_prob.solver_stats.solve_time
+
+        x_star, u_star, y_star = None, None, None
         if self.bin_prob.status == 'optimal':
             prob_success = True
             cost = self.bin_prob.value
             x_star = self.bin_prob_variables['x'].value
             u_star = self.bin_prob_variables['u'].value
             y_star = self.bin_prob_variables['y'].value.astype(int)
-            
+
+        # Clear any saved params
+        for p in self.sampled_params:
+            self.bin_prob_parameters[p].value = None
+
         return prob_success, cost, solve_time, (x_star, u_star, y_star)
 
     def solve_pinned(self, params, strat, solver=cp.MOSEK):
@@ -265,13 +270,15 @@ class FreeFlyer(Problem):
           violations.append(curr_violations)
           return violations
 
-    def construct_features(self, params, prob_features):
+    def construct_features(self, params, prob_features, ii_obs=None):
         """Helper function to construct feature vector from parameter vector.
         
         Args:
             params: Dict of param values; keys are self.sampled_params,
                 values are numpy arrays of specific param values.
             prob_features: list of strings, desired features for classifier.
+            ii_obs: index of obstacle strategy being queried; appends one-hot
+                encoding to end of feature vector
         """
         feature_vec = np.array([])
 
@@ -280,8 +287,10 @@ class FreeFlyer(Problem):
         obstacles = params['obstacles']
 
         for feature in prob_features:
-          if feature == "X0":
+          if feature == "x0":
             feature_vec = np.hstack((feature_vec, x0))
+          elif feature == "xg":
+            feature_vec = np.hstack((feature_vec, xg))
           elif feature == "obstacles":
             feature_vec = np.hstack((feature_vec, np.reshape(obstacles, (4*self.n_obs))))
           elif feature == "obstacles_map":
@@ -311,4 +320,11 @@ class FreeFlyer(Problem):
                     table_img[1:, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0
           else:
             print('Feature {} is unknown'.format(feature))
+
+        # Append one-hot encoding to end
+        if ii_obs is not None:
+          one_hot = np.zeros(self.n_obs)
+          one_hot[ii_obs] = 1.
+          feature_vec = np.hstack((feature_vec, one_hot))
+
         return feature_vec

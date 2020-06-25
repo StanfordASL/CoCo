@@ -203,17 +203,21 @@ class Cartpole(Problem):
         
         # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
-        x_star, u_star, y_star = None, None, None
         self.bin_prob.solve(solver=solver)
-        
         solve_time = self.bin_prob.solver_stats.solve_time
+
+        x_star, u_star, y_star = None, None, None
         if self.bin_prob.status == 'optimal':
             prob_success = True
             cost = self.bin_prob.value
             x_star = self.bin_prob_variables['x'].value
             u_star = self.bin_prob_variables['u'].value
             y_star = self.bin_prob_variables['y'].value.astype(int)
-            
+
+        # Clear any saved params
+        for p in self.sampled_params:
+            self.bin_prob_parameters[p].value = None
+
         return prob_success, cost, solve_time, (x_star, u_star, y_star)
         
     def solve_pinned(self, params, strat, solver=cp.GUROBI):

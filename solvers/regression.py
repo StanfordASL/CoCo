@@ -194,7 +194,9 @@ class Regression(Solver):
         inpt = Variable(torch.from_numpy(features)).float().cuda()
         out = self.model(inpt).cpu().detach()
         y_guess = Sigmoid()(out).round().numpy()[:]
-        y_guess = np.reshape(y_guess, self.y_shape) 
+
+        # weirdly need to reshape in reverse order of cvxpy variable shape
+        y_guess = np.reshape(y_guess, self.y_shape[::-1]).T
 
         prob_success, cost, total_time = False, np.Inf, 0. 
         prob_success, cost, solve_time = self.problem.solve_pinned(prob_params, y_guess, solver)
