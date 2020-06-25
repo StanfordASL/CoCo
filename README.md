@@ -7,7 +7,7 @@ This repository uses cvxpy for the construction of the optimization problems and
 pip3 install -r requirements_cython.txt
 pip3 install -r requirements.txt
 ```
-We also use the [Gurobi][https://support.gurobi.com/hc/en-us/community/posts/360046430451/comments/360005981732] and [Mosek][https://www.mosek.com/downloads/] commercial solvers for solving our problems.
+We also use the [Gurobi](https://support.gurobi.com/hc/en-us/community/posts/360046430451/comments/360005981732) and [Mosek](https://www.mosek.com/downloads/) commercial solvers for solving our problems.
 
 Further, define an environment variable `MLOPT` that points to the working directory where this packagee is installed.
 
