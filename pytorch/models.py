@@ -34,7 +34,7 @@ class FFNet(torch.nn.Module):
 
         return self.layers[-1](x)
 
-class BnBCNN(torch.nn.Module):
+class CNNet(torch.nn.Module):
     """PyTorch Module which implements a combined CNN-feedforward network for node classification.
     
     Attributes:
@@ -50,7 +50,7 @@ class BnBCNN(torch.nn.Module):
     """
     def __init__(self,num_features,channels,ff_shape, input_size, kernel=2,stride=2, padding=0,
         conv_activation=None,ff_activation=None,pool=None):
-        """Constructor for BnBCNN.
+        """Constructor for CNNet.
 
         Arguments:
             num_features: length of node feature vector.
@@ -67,7 +67,7 @@ class BnBCNN(torch.nn.Module):
             ff_activation: nonlinear activation to be used after each ff layer
             pool: pooling to be added after each layer. if None, no pooling. if scalar, same pooling for each layer.
         """
-        super(BnBCNN, self).__init__()
+        super(CNNet, self).__init__()
         N = len(channels)-1 #number of conv layers
         if type(kernel) is int:
             self.kernel = [kernel]*N
@@ -117,7 +117,7 @@ class BnBCNN(torch.nn.Module):
         feature_batch: batch of real-valued features (torch.Tensor of floats), of size [B,N], where N is the num_features
             passed during initialization.
             
-        Usage: cnn = BnBCNN(...); outs = cnn(images_in,features_in)
+        Usage: cnn = CNNet(...); outs = cnn(images_in,features_in)
         """
         x = image_batch
         for ii in range(0,len(self.conv_layers)):

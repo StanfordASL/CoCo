@@ -116,6 +116,7 @@ class Regression(Solver):
         if os.path.exists(fn_regressor_model):
             print('Loading presaved regression model from {}'.format(fn_regressor_model))
             self.model.load_state_dict(torch.load(fn_regressor_model))
+            self.model_fn = fn_regressor_model
 
     def train(self):
         # grab training params

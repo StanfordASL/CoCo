@@ -39,6 +39,8 @@ class FreeFlyer(Problem):
           self.posmin, self.posmax, self.velmin, self.velmax, \
           self.umin, self.umax = prob_params
 
+        self.H, self.W = 32, 32
+
         self.init_bin_problem()
         self.init_mlopt_problem()
 
@@ -253,26 +255,24 @@ class FreeFlyer(Problem):
         violations = [] # list of obstacle big-M violations
 
         for i_obs in range(self.n_obs):
-          curr_violations = [] # violations for current obstacle
-          for i_t in range(self.N-1):
-            for i_dim in range(self.n):
-              o_min = obstacles[self.n*i_dim,i_obs]
-              o_max = obstacles[self.n*i_dim+1,i_obs]
+            curr_violations = [] # violations for current obstacle
+            for i_t in range(self.N-1):
+                for i_dim in range(self.n):
+                    o_min = obstacles[self.n*i_dim,i_obs]
+                    if (x[i_dim,i_t+1] - o_min > ineq_tol):
+                        curr_violations.append(self.n*i_dim + 2*self.n*i_t)
 
-              for i_t in range(self.N-1):
-                yvar_min = 4*i_obs + self.n*i_dim
-                yvar_max = 4*i_obs + self.n*i_dim + 1
-
-                if (x[i_dim,i_t+1] - o_min > ineq_tol):
-                  curr_violations.append(4*self.n_obs*i_t + yvar_min)
-                if (-x[i_dim,i_t+1]  + o_max > ineq_tol): 
-                  curr_violations.append(4*self.n_obs*i_t + yvar_max)
-          violations.append(curr_violations)
-          return violations
+                    o_max = obstacles[self.n*i_dim+1,i_obs]
+                    if (-x[i_dim,i_t+1]  + o_max > ineq_tol):
+                        curr_violations.append(self.n*i_dim+1 + 2*self.n*i_t)
+            curr_violations = list(set(curr_violations))
+            curr_violations.sort()
+            violations.append(curr_violations)
+        return violations
 
     def construct_features(self, params, prob_features, ii_obs=None):
         """Helper function to construct feature vector from parameter vector.
-        
+
         Args:
             params: Dict of param values; keys are self.sampled_params,
                 values are numpy arrays of specific param values.
@@ -287,44 +287,68 @@ class FreeFlyer(Problem):
         obstacles = params['obstacles']
 
         for feature in prob_features:
-          if feature == "x0":
-            feature_vec = np.hstack((feature_vec, x0))
-          elif feature == "xg":
-            feature_vec = np.hstack((feature_vec, xg))
-          elif feature == "obstacles":
-            feature_vec = np.hstack((feature_vec, np.reshape(obstacles, (4*self.n_obs))))
-          elif feature == "obstacles_map":
-            print("obstacles_map feature not implemented yet!")
-            continue
-            W_H_ratio = posmax[0] / posmax[1]
-            H = 32
-            W = int(W_H_ratio * H)
-
-            table_img = np.ones((3,H,W))
-
-            # Draw in obstacle of interest last
-            obs_ll = [ii for ii in range(n_obs) if ii is not obs_ii]
-            obs_ll.append(obs_ii)
-
-            for ll in obs_ll:
-                obs = obstacles[ll]
-                row_range = range(int(float(obs[2])/posmax[1]*H), int(float(obs[3])/posmax[1]*H))
-                col_range = range(int(float(obs[0])/posmax[0]*W), int(float(obs[1])/posmax[0]*W))
-                row_range = range(np.maximum(row_range[0],0), np.minimum(row_range[-1],H))
-                col_range = range(np.maximum(col_range[0],0), np.minimum(col_range[-1],W))
-
-                if ll is obs_ii:
-                    table_img[:, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 1
-                    table_img[:2, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0
-                else:
-                    table_img[1:, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0
-          else:
-            print('Feature {} is unknown'.format(feature))
+            if feature == "x0":
+                feature_vec = np.hstack((feature_vec, x0))
+            elif feature == "xg":
+                feature_vec = np.hstack((feature_vec, xg))
+            elif feature == "obstacles":
+                feature_vec = np.hstack((feature_vec, np.reshape(obstacles, (4*self.n_obs))))
+            elif feature == "obstacles_map":
+                continue
+            else:
+                print('Feature {} is unknown'.format(feature))
 
         # Append one-hot encoding to end
         if ii_obs is not None:
-          one_hot = np.zeros(self.n_obs)
-          one_hot[ii_obs] = 1.
-          feature_vec = np.hstack((feature_vec, one_hot))
+            one_hot = np.zeros(self.n_obs)
+            one_hot[ii_obs] = 1.
+            feature_vec = np.hstack((feature_vec, one_hot))
 
         return feature_vec
+
+    def construct_cnn_features(self, params, prob_features, ii_obs=None):
+        """Helper function to construct 3xHxW image for CNN with
+                obstacles shaded in blue and ii_obs shaded in red
+
+        Args:
+            params: Dict of param values; keys are self.sampled_params,
+                values are numpy arrays of specific param values.
+            prob_features: list of strings, desired features for classifier.
+            ii_obs: index of obstacle strategy being queried; appends one-hot
+                encoding to end of feature vector
+        """
+        if "obstacles_map" not in prob_features:
+            return None
+
+        obstacles = params['obstacles']
+
+        # W_H_ratio = self.posmax[0] / self.posmax[1]
+        # H = 32
+        # W = int(W_H_ratio * H)
+        H, W = self.H, self.W
+
+        posmin, posmax = self.posmin, self.posmax
+
+        table_img = np.ones((3,H,W))
+
+        # If a particular obstacle requested, shade that in last
+        obs_list = [ii for ii in range(self.n_obs) if ii is not ii_obs]
+        if ii_obs is not None:
+            obs_list.append(ii_obs)
+
+        for ll in obs_list:
+            obs = obstacles[:,ll]
+            row_range = range(int(float(obs[2])/posmax[1]*H), int(float(obs[3])/posmax[1]*H))
+            col_range = range(int(float(obs[0])/posmax[0]*W), int(float(obs[1])/posmax[0]*W))
+            row_range = range(np.maximum(row_range[0],0), np.minimum(row_range[-1],H))
+            col_range = range(np.maximum(col_range[0],0), np.minimum(col_range[-1],W))
+
+            # 0 out RG channels, leaving only B channel on
+            table_img[:2, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0.
+
+            if ii_obs is not None and ll is ii_obs:
+                # 0 out all channels and then turn R channel on
+                table_img[:, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 0.
+                table_img[0, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 1.
+
+        return table_img
