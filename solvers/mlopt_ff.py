@@ -19,7 +19,7 @@ sys.path.insert(1, os.environ['MLOPT'])
 sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
 
 from core import Problem, Solver 
-from pytorch.models import FFNet
+from pytorch.models import FFNet, CNNet
 
 class MLOPT_FF(Solver):
     def __init__(self, system, problem, prob_features, n_evals=2):
@@ -57,6 +57,8 @@ class MLOPT_FF(Solver):
         self.training_labels = {}
 
         p_train = train_data[0]
+        obs_train = p_train['obstacles']
+        x_train = train_data[1]
         y_train = train_data[-3]
         for k in p_train.keys():
           self.num_train = len(p_train[k])
@@ -64,6 +66,7 @@ class MLOPT_FF(Solver):
         ## TODO(acauligi): add support for combining p_train & p_test correctly
         ## to be able to generate strategies for train and test params here
         # p_test = None
+        # x_test = None
         # y_test = np.empty((*y_train.shape[:-1], 0))   # Assumes y_train is 3D tensor
         # if test_data:
         #   p_test, y_test = test_data[:2]
@@ -78,28 +81,36 @@ class MLOPT_FF(Solver):
         self.n_y = int(self.Y[0].size / self.problem.n_obs)
         self.y_shape = self.Y[0].shape
         self.features = np.zeros((num_probs, self.n_features))
+        self.cnn_features = np.zeros((num_probs, 3,self.problem.H,self.problem.W))
         self.labels = np.zeros((num_probs, 1+self.n_y))
         self.n_strategies = 0
 
         for ii in range(num_probs):
+            obstacles = obs_train[ii]
+            obs_strats = self.problem.which_M(x_train[ii], obstacles)
+
             for ii_obs in range(self.problem.n_obs): 
                 # TODO(acauligi): check if transpose necessary with new pickle save format for Y
                 y_true = np.reshape(self.Y[ii,4*ii_obs:4*(ii_obs+1),:], (self.n_y))
+                obs_strat = tuple(obs_strats[ii_obs])
 
-                if tuple(y_true) not in self.strategy_dict.keys():
+                if obs_strat not in self.strategy_dict.keys():
                     label = np.hstack((self.n_strategies,np.copy(y_true)))
-                    self.strategy_dict[tuple(y_true)] = label
+                    self.strategy_dict[obs_strat] = label
                     self.n_strategies += 1
                 else:
-                    label = np.hstack((self.strategy_dict[tuple(y_true)][0], y_true))
+                    label = np.hstack((self.strategy_dict[obs_strat][0], y_true))
 
                 prob_params = {}
                 for k in params:
-                  prob_params[k] = params[k][ii]
+                    prob_params[k] = params[k][ii]
                 features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
-                self.training_labels[tuple(features)] = self.strategy_dict[tuple(y_true)]
+                cnn_features = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
+
+                self.training_labels[tuple(features)] = self.strategy_dict[obs_strat]
 
                 self.features[ii] = features
+                self.cnn_features[ii] = cnn_features
                 self.labels[ii] =  label
 
     def setup_network(self, depth=3, neurons=32): 
@@ -108,7 +119,19 @@ class MLOPT_FF(Solver):
             ff_shape.append(neurons)
 
         ff_shape.append(self.n_strategies)
-        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
+        if "obstacles_map" not in self.prob_features:
+          self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
+        else:
+          ker = 2
+          strd = 2
+          pd = 0
+          channels = [3, 5, 10, 10]
+          H, W = 32, 32
+          input_size = (H,W)
+
+          self.model = CNNet(self.n_features, channels, ff_shape, input_size, \
+                kernel=ker, stride=strd, padding=pd, \
+                conv_activation=torch.nn.ReLU(), ff_activation=torch.nn.ReLU()).cuda()
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -120,8 +143,9 @@ class MLOPT_FF(Solver):
         if os.path.exists(fn_classifier_model):
             print('Loading presaved classifier model from {}'.format(fn_classifier_model))
             self.model.load_state_dict(torch.load(fn_classifier_model))
+            self.model_fn = fn_classifier_model
 
-    def train(self):
+    def train(self, verbose=True):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -131,8 +155,11 @@ class MLOPT_FF(Solver):
         TEST_BATCH_SIZE = self.training_params['TEST_BATCH_SIZE']
 
         model = self.model
-        
+
         X = self.features[:self.num_train]
+        X_cnn = None
+        if type(model) is CNNet:
+          X_cnn = self.cnn_features[:self.num_train]
         Y = self.labels[:self.num_train,0]
 
         training_loss = torch.nn.CrossEntropyLoss()
@@ -152,11 +179,16 @@ class MLOPT_FF(Solver):
                 # zero the parameter gradients
                 opt.zero_grad()
 
-                inputs = Variable(torch.from_numpy(X[idx,:])).float().cuda()
+                ff_inputs = Variable(torch.from_numpy(X[idx,:])).float().cuda()
                 labels = Variable(torch.from_numpy(Y[idx])).long().cuda()
 
                 # forward + backward + optimize
-                outputs = model(inputs)
+                if type(model) is CNNet:
+                    cnn_inputs = Variable(torch.from_numpy(X_cnn[idx,:])).float().cuda()
+                    outputs = model(cnn_inputs, ff_inputs)
+                else:
+                    outputs = model(ff_inputs)
+
                 loss = training_loss(outputs, labels).float().cuda()
                 class_guesses = torch.argmax(outputs,1)
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
@@ -170,23 +202,29 @@ class MLOPT_FF(Solver):
                     rand_idx = list(np.arange(0,X.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
-                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().cuda()
+                    ff_inputs = Variable(torch.from_numpy(X[test_inds,:])).float().cuda()
                     labels = Variable(torch.from_numpy(Y[test_inds])).long().cuda()
 
                     # forward + backward + optimize
-                    outputs = model(inputs)
+                    if type(model) is CNNet:
+                        cnn_inputs = Variable(torch.from_numpy(X_cnn[test_inds,:])).float().cuda()
+                        outputs = model(cnn_inputs, ff_inputs)
+                    else:
+                        outputs = model(ff_inputs)
+
+
                     loss = training_loss(outputs, labels).float().cuda()
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
-                    print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
+                    verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.state_dict(), self.model_fn)
-                    print('Saved model at {}'.format(self.model_fn))
+                    verbose and print('Saved model at {}'.format(self.model_fn))
                     # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
-            print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
+            verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
         torch.save(model.state_dict(), self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
@@ -201,9 +239,16 @@ class MLOPT_FF(Solver):
         ind_max = np.zeros((self.problem.n_obs, self.n_evals), dtype=int)
         for ii_obs in range(self.problem.n_obs):
           features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
+          inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float().cuda()
 
-          inpt = Variable(torch.from_numpy(features)).float().cuda()
-          scores = self.model(inpt).cpu().detach().numpy()[:]
+          scores = None
+          if type(self.model) is CNNet:
+            cnn_features = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
+            cnn_inpt = Variable(torch.from_numpy(cnn_features)).unsqueeze(0).float().cuda()
+
+            scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:].squeeze(0)
+          else:
+            scores = self.model(inpt).cpu().detach().numpy()[:].squeeze(0)
 
           # ii_obs'th row of ind_max contains top scoring indices for that obstacle
           ind_max[ii_obs] = np.argsort(scores)[-self.n_evals:][::-1]
