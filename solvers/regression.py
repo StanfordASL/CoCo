@@ -50,8 +50,6 @@ class Regression(Solver):
             TODO(acauligi): be able to compute strategies for test-set too
         """
         self.n_features = n_features
-        self.strategy_dict = {}
-        self.training_labels = {}
 
         p_train = train_data[0]
         y_train = train_data[-3]
@@ -75,34 +73,22 @@ class Regression(Solver):
         self.n_y = self.Y[0].size
         self.y_shape = self.Y[0].shape
         self.features = np.zeros((num_probs, self.n_features))
-        self.labels = np.zeros((num_probs, 1+self.n_y))
-        self.n_strategies = 0
+        self.labels = np.zeros((num_probs, self.n_y))
 
         for ii in range(num_probs):
             # TODO(acauligi): check if transpose necessary with new pickle save format for Y
-            y_true = np.reshape(self.Y[ii,:,:].T, (self.n_y))
-
-            if tuple(y_true) not in self.strategy_dict.keys():
-                label = np.hstack((self.n_strategies,np.copy(y_true)))
-                self.strategy_dict[tuple(y_true)] = label
-                self.n_strategies += 1
-            else:
-                label = np.hstack((self.strategy_dict[tuple(y_true)][0], y_true))
+            self.labels[ii] = np.reshape(self.Y[ii,:,:].T, (self.n_y))
 
             prob_params = {}
             for k in params:
               prob_params[k] = params[k][ii]
-            features = self.problem.construct_features(prob_params, self.prob_features)
-            self.training_labels[tuple(features)] = self.strategy_dict[tuple(y_true)]
-
-            self.features[ii] = features
-            self.labels[ii] =  label
+            self.features[ii] = self.problem.construct_features(prob_params, self.prob_features)
 
     def setup_network(self, depth=3, neurons=32):
         ff_shape = [self.n_features]
         for ii in range(depth):
           ff_shape.append(neurons)
-        ff_shape.append(int(self.labels.shape[1]-1))
+        ff_shape.append(self.n_y)
 
         self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
 
@@ -118,7 +104,7 @@ class Regression(Solver):
             self.model.load_state_dict(torch.load(fn_regressor_model))
             self.model_fn = fn_regressor_model
 
-    def train(self):
+    def train(self, verbose=True):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -130,7 +116,7 @@ class Regression(Solver):
         model = self.model
 
         X = self.features[:self.num_train]
-        Y = self.labels[:self.num_train,1:]
+        Y = self.labels[:self.num_train]
 
         # See: https://discuss.pytorch.org/t/multi-label-classification-in-pytorch/905/45
         training_loss = torch.nn.BCEWithLogitsLoss()
@@ -174,21 +160,20 @@ class Regression(Solver):
                     outputs = Sigmoid()(outputs).round()
                     accuracy = [float(all(torch.eq(outputs[ii],y_out[ii]))) for ii in range(TEST_BATCH_SIZE)]
                     accuracy = np.mean(accuracy)
-                    print("loss:   "+str(loss.item()) + " , acc: " + str(accuracy))
+                    verbose and print("loss:   "+str(loss.item()) + " , acc: " + str(accuracy))
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.state_dict(), self.model_fn)
-                    print('Saved model at {}'.format(self.model_fn))
+                    verbose and print('Saved model at {}'.format(self.model_fn))
                     # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
-            print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
+            verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
         torch.save(model.state_dict(), self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
 
         print('Done training')
-
 
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)

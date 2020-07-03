@@ -244,7 +244,7 @@ class FreeFlyer(Problem):
         """Method to check which big-M constraints are active.
         
         Args:
-            x: numpy array of size [self.n, self.N], state trajectory.
+            x: numpy array of size [2*self.n, self.N], state trajectory.
             obstacles: numpy array of size [4, self.n_obs]
             eq_tol: tolerance for equality constraints, default of 1e-5.
             ineq_tol : tolerance for ineq. constraints, default of 1e-5.

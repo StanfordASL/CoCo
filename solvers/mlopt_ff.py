@@ -54,14 +54,13 @@ class MLOPT_FF(Solver):
         """
         self.n_features = n_features
         self.strategy_dict = {}
-        self.training_labels = {}
 
         p_train = train_data[0]
         obs_train = p_train['obstacles']
         x_train = train_data[1]
         y_train = train_data[-3]
         for k in p_train.keys():
-          self.num_train = len(p_train[k])
+            self.num_train = len(p_train[k])
 
         ## TODO(acauligi): add support for combining p_train & p_test correctly
         ## to be able to generate strategies for train and test params here
@@ -80,40 +79,36 @@ class MLOPT_FF(Solver):
 
         self.n_y = int(self.Y[0].size / self.problem.n_obs)
         self.y_shape = self.Y[0].shape
-        self.features = np.zeros((num_probs, self.n_features))
-        self.cnn_features = np.zeros((num_probs, 3,self.problem.H,self.problem.W))
-        self.labels = np.zeros((num_probs, 1+self.n_y))
+        self.features = np.zeros((self.problem.n_obs*num_probs, self.n_features))
+        self.cnn_features = None
+        if "obstacles_map" in self.prob_features:
+            self.cnn_features = np.zeros((self.problem.n_obs*num_probs, 3,self.problem.H,self.problem.W))
+        self.labels = np.zeros((self.problem.n_obs*num_probs, 1+self.n_y), dtype=int)
         self.n_strategies = 0
 
         for ii in range(num_probs):
-            obstacles = obs_train[ii]
-            obs_strats = self.problem.which_M(x_train[ii], obstacles)
+            obs_strats = self.problem.which_M(x_train[ii], obs_train[ii])
+
+            prob_params = {}
+            for k in params:
+                prob_params[k] = params[k][ii]
 
             for ii_obs in range(self.problem.n_obs): 
                 # TODO(acauligi): check if transpose necessary with new pickle save format for Y
-                y_true = np.reshape(self.Y[ii,4*ii_obs:4*(ii_obs+1),:], (self.n_y))
+                y_true = np.reshape(self.Y[ii, 4*ii_obs:4*(ii_obs+1),:], (self.n_y))
                 obs_strat = tuple(obs_strats[ii_obs])
 
                 if obs_strat not in self.strategy_dict.keys():
-                    label = np.hstack((self.n_strategies,np.copy(y_true)))
-                    self.strategy_dict[obs_strat] = label
+                    self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, np.copy(y_true)))
                     self.n_strategies += 1
-                else:
-                    label = np.hstack((self.strategy_dict[obs_strat][0], y_true))
 
-                prob_params = {}
-                for k in params:
-                    prob_params[k] = params[k][ii]
-                features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
-                cnn_features = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
+                self.labels[ii*self.problem.n_obs+ii_obs] = self.strategy_dict[obs_strat]
 
-                self.training_labels[tuple(features)] = self.strategy_dict[obs_strat]
+                self.features[ii*self.problem.n_obs+ii_obs] = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
+                if "obstacles_map" in self.prob_features:
+                    self.cnn_features[ii*self.problem.n_oobs+ii_obs] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
 
-                self.features[ii] = features
-                self.cnn_features[ii] = cnn_features
-                self.labels[ii] =  label
-
-    def setup_network(self, depth=3, neurons=32): 
+    def setup_network(self, depth=3, neurons=128):
         ff_shape = [self.n_features]
         for ii in range(depth):
             ff_shape.append(neurons)
@@ -135,7 +130,7 @@ class MLOPT_FF(Solver):
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
-        model_fn = 'mlopt_{}_{}.pt'
+        model_fn = 'mloptff_{}_{}.pt'
         model_fn = os.path.join(os.getcwd(), model_fn)
         self.model_fn = model_fn.format(self.system, now)
 
@@ -156,11 +151,11 @@ class MLOPT_FF(Solver):
 
         model = self.model
 
-        X = self.features[:self.num_train]
+        X = self.features[:self.problem.n_obs*self.num_train]
         X_cnn = None
         if type(model) is CNNet:
-          X_cnn = self.cnn_features[:self.num_train]
-        Y = self.labels[:self.num_train,0]
+          X_cnn = self.cnn_features[:self.problem.n_obs*self.num_train]
+        Y = self.labels[:self.problem.n_obs*self.num_train,0]
 
         training_loss = torch.nn.CrossEntropyLoss()
         opt = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.00001)
@@ -183,6 +178,7 @@ class MLOPT_FF(Solver):
                 labels = Variable(torch.from_numpy(Y[idx])).long().cuda()
 
                 # forward + backward + optimize
+                outputs = None
                 if type(model) is CNNet:
                     cnn_inputs = Variable(torch.from_numpy(X_cnn[idx,:])).float().cuda()
                     outputs = model(cnn_inputs, ff_inputs)
@@ -211,7 +207,6 @@ class MLOPT_FF(Solver):
                         outputs = model(cnn_inputs, ff_inputs)
                     else:
                         outputs = model(ff_inputs)
-
 
                     loss = training_loss(outputs, labels).float().cuda()
                     class_guesses = torch.argmax(outputs,1)
@@ -257,15 +252,14 @@ class MLOPT_FF(Solver):
         # Save ii'th stratey in obs_strats dictionary
         obs_strats = {}
         uniq_idxs = np.unique(ind_max)
-        for k,v in self.training_labels.items():
-          for ii,idx in enumerate(uniq_idxs):
-            # first index of training label is that strategy's idx
-            if v[0] == idx:
-              # remainder of training label is that strategy's binary pin
-              obs_strats[idx] = v[1:]
-          if len(obs_strats) == uniq_idxs.size:
-            # All strategies found 
-            break
+
+        for ii,idx in enumerate(uniq_idxs):
+            for jj in range(self.labels.shape[0]):
+                # first index of training label is that strategy's idx
+                label = self.labels[jj]
+                if label[0] == idx:
+                    # remainder of training label is that strategy's binary pin
+                    obs_strats[idx] = label[1:]
 
         # Generate Cartesian product of strategy combinations
         vv = [np.arange(0,self.n_evals) for _ in range(self.problem.n_obs)]
