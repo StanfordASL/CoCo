@@ -263,11 +263,15 @@ class MLOPT_FF(Solver):
             # cnn_inpt = Variable(torch.from_numpy(cnn_features)).unsqueeze(0).float().cuda()
             cnn_inpt = Variable(torch.from_numpy(cnn_features)).float().cuda()
 
+            t0 = time.time()
             scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:].squeeze(0)
           else:
             features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
             inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float().cuda()
+            t0 = time.time()
             scores = self.model(inpt).cpu().detach().numpy()[:].squeeze(0)
+          torch.cuda.synchronize()
+          total_time = time.time()-t0
 
           # ii_obs'th row of ind_max contains top scoring indices for that obstacle
           ind_max[ii_obs] = np.argsort(scores)[-self.n_evals:][::-1]
@@ -301,7 +305,7 @@ class MLOPT_FF(Solver):
           str_idxs = np.insert(str_idxs, 0, 0)[:-1]
         strategy_tuples = [strategy_tuples[ii] for ii in str_idxs]
 
-        prob_success, cost, total_time, n_evals = False, np.Inf, 0., max_evals 
+        prob_success, cost, n_evals = False, np.Inf, max_evals
         for ii, str_tuple in enumerate(strategy_tuples):
           y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
           for ii_obs in range(self.problem.n_obs):

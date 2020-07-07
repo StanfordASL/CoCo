@@ -189,7 +189,10 @@ class MLOPT(Solver):
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
         inpt = Variable(torch.from_numpy(features)).float().cuda()
+        t0 = time.time()
         scores = self.model(inpt).cpu().detach().numpy()[:]
+        torch.cuda.synchronize()
+        total_time = time.time()-t0
         ind_max = np.argsort(scores)[-self.n_evals:][::-1]
 
         y_guesses = np.zeros((self.n_evals, self.n_y), dtype=int)
@@ -204,7 +207,7 @@ class MLOPT(Solver):
                     y_guesses[ii] = label[1:]
                     break
 
-        prob_success, cost, total_time, n_evals = False, np.Inf, 0., len(y_guesses)
+        prob_success, cost, n_evals = False, np.Inf, len(y_guesses)
         for ii,idx in enumerate(ind_max):
             y_guess = y_guesses[ii]
 

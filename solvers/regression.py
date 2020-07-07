@@ -178,12 +178,16 @@ class Regression(Solver):
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
         inpt = Variable(torch.from_numpy(features)).float().cuda()
+        t0 = time.time()
         out = self.model(inpt).cpu().detach()
+        torch.cuda.synchronize()
+        total_time = time.time()-t0
         y_guess = Sigmoid()(out).round().numpy()[:]
 
         # weirdly need to reshape in reverse order of cvxpy variable shape
         y_guess = np.reshape(y_guess, self.y_shape[::-1]).T
 
-        prob_success, cost, total_time = False, np.Inf, 0. 
+        prob_success, cost = False, np.Inf
         prob_success, cost, solve_time = self.problem.solve_pinned(prob_params, y_guess, solver)
-        return prob_success, cost, total_time,
+        total_time += solve_time
+        return prob_success, cost, total_time
