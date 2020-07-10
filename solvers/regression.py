@@ -54,7 +54,7 @@ class Regression(Solver):
         p_train = train_data[0]
         y_train = train_data[-3]
         for k in p_train.keys():
-          self.num_train = len(p_train[k])
+            self.num_train = len(p_train[k])
 
         ## TODO(acauligi): add support for combining p_train & p_test correctly
         ## to be able to generate strategies for train and test params here
@@ -81,13 +81,13 @@ class Regression(Solver):
 
             prob_params = {}
             for k in params:
-              prob_params[k] = params[k][ii]
+                prob_params[k] = params[k][ii]
             self.features[ii] = self.problem.construct_features(prob_params, self.prob_features)
 
     def setup_network(self, depth=3, neurons=32):
         ff_shape = [self.n_features]
         for ii in range(depth):
-          ff_shape.append(neurons)
+            ff_shape.append(neurons)
         ff_shape.append(self.n_y)
 
         self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
@@ -152,7 +152,7 @@ class Regression(Solver):
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
                     inputs = Variable(torch.from_numpy(X[test_inds,:])).float().cuda()
-                    labels = Variable(torch.from_numpy(Y[test_inds])).float().cuda()
+                    y_out = Variable(torch.from_numpy(Y[test_inds])).float().cuda()
 
                     # forward + backward + optimize
                     outputs = model(inputs)

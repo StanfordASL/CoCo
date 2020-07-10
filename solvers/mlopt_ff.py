@@ -116,19 +116,19 @@ class MLOPT_FF(Solver):
 
         ff_shape.append(self.n_strategies)
         if "obstacles_map" not in self.prob_features:
-          ff_shape.insert(0, self.n_features)
-          self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
+            ff_shape.insert(0, self.n_features)
+            self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
         else:
-          ker = 2
-          strd = 2
-          pd = 0
-          channels = [3, 16, 16, 16]
-          H, W = 32, 32
-          input_size = (H,W)
+            ker = 2
+            strd = 2
+            pd = 0
+            channels = [3, 16, 16, 16]
+            H, W = 32, 32
+            input_size = (H,W)
 
-          self.model = CNNet(self.n_features, channels, ff_shape, input_size, \
-                kernel=ker, stride=strd, padding=pd, \
-                conv_activation=torch.nn.ReLU(), ff_activation=torch.nn.ReLU()).cuda()
+            self.model = CNNet(self.n_features, channels, ff_shape, input_size, \
+                  kernel=ker, stride=strd, padding=pd, \
+                  conv_activation=torch.nn.ReLU(), ff_activation=torch.nn.ReLU()).cuda()
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -250,31 +250,31 @@ class MLOPT_FF(Solver):
         # Compute forward pass for each obstacle and save the top
         # n_eval's scoring strategies in ind_max
         ind_max = np.zeros((self.problem.n_obs, self.n_evals), dtype=int)
+        total_time = 0.   # start timing forward passes of network
         for ii_obs in range(self.problem.n_obs):
+            scores = None
 
+            if 'obstacles_map' in self.prob_features:
+                features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=None)
+                inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float().cuda()
 
-          scores = None
-          if 'obstacles_map' in self.prob_features:
-            features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=None)
-            inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float().cuda()
+                cnn_features = np.zeros((1, 3,self.problem.H,self.problem.W))
+                cnn_features[0] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
+                # cnn_inpt = Variable(torch.from_numpy(cnn_features)).unsqueeze(0).float().cuda()
+                cnn_inpt = Variable(torch.from_numpy(cnn_features)).float().cuda()
 
-            cnn_features = np.zeros((1, 3,self.problem.H,self.problem.W))
-            cnn_features[0] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
-            # cnn_inpt = Variable(torch.from_numpy(cnn_features)).unsqueeze(0).float().cuda()
-            cnn_inpt = Variable(torch.from_numpy(cnn_features)).float().cuda()
+                t0 = time.time()
+                scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:].squeeze(0)
+            else:
+                features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
+                inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float().cuda()
+                t0 = time.time()
+                scores = self.model(inpt).cpu().detach().numpy()[:].squeeze(0)
+            torch.cuda.synchronize()
+            total_time += (time.time()-t0)
 
-            t0 = time.time()
-            scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:].squeeze(0)
-          else:
-            features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
-            inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float().cuda()
-            t0 = time.time()
-            scores = self.model(inpt).cpu().detach().numpy()[:].squeeze(0)
-          torch.cuda.synchronize()
-          total_time = time.time()-t0
-
-          # ii_obs'th row of ind_max contains top scoring indices for that obstacle
-          ind_max[ii_obs] = np.argsort(scores)[-self.n_evals:][::-1]
+            # ii_obs'th row of ind_max contains top scoring indices for that obstacle
+            ind_max[ii_obs] = np.argsort(scores)[-self.n_evals:][::-1]
 
         # Loop through strategy dictionary once
         # Save ii'th stratey in obs_strats dictionary
@@ -300,27 +300,27 @@ class MLOPT_FF(Solver):
 
         # Manually add top-scoring strategy tuples
         if 0 in str_idxs:
-          str_idxs = np.unique(np.insert(str_idxs, 0, 0))
+            str_idxs = np.unique(np.insert(str_idxs, 0, 0))
         else:
-          str_idxs = np.insert(str_idxs, 0, 0)[:-1]
+            str_idxs = np.insert(str_idxs, 0, 0)[:-1]
         strategy_tuples = [strategy_tuples[ii] for ii in str_idxs]
 
         prob_success, cost, n_evals = False, np.Inf, max_evals
         for ii, str_tuple in enumerate(strategy_tuples):
-          y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
-          for ii_obs in range(self.problem.n_obs):
-            # rows of ind_max correspond to ii_obs, column to desired strategy
-            y_obs = obs_strats[ind_max[ii_obs, str_tuple[ii_obs]]]
-            y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.problem.N-1))
-          if (y_guess < 0).any():
-            print("Strategy was not correctly found!")
-            return False, np.Inf, total_time, n_evals
+            y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
+            for ii_obs in range(self.problem.n_obs):
+                # rows of ind_max correspond to ii_obs, column to desired strategy
+                y_obs = obs_strats[ind_max[ii_obs, str_tuple[ii_obs]]]
+                y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.problem.N-1))
+            if (y_guess < 0).any():
+                print("Strategy was not correctly found!")
+                return False, np.Inf, total_time, n_evals
 
-          prob_success, cost, solve_time = self.problem.solve_pinned(prob_params, y_guess, solver)
+            prob_success, cost, solve_time = self.problem.solve_pinned(prob_params, y_guess, solver=solver)
 
-          total_time += solve_time
-          n_evals = ii+1
-          if prob_success:
-            break
+            total_time += solve_time
+            n_evals = ii+1
+            if prob_success:
+                break
 
         return prob_success, cost, total_time, n_evals
