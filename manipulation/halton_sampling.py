@@ -1,3 +1,4 @@
+import os
 import numpy as np
 
 def generate_first_N_primes(N): 

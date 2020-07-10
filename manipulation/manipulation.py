@@ -5,8 +5,9 @@ import numpy as np
 import sys
 
 sys.path.insert(1, os.environ['MLOPT'])
+sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'manipulation'))
 
-from utils import sample_points 
+from utils import sample_points
 from core import Problem
 
 class Manipulation(Problem):
@@ -201,3 +202,32 @@ class Manipulation(Problem):
         self.mlopt_prob_parameters['y'].value = None
 
         return prob_success, cost, solve_time
+
+    def which_M(self):
+        pass
+
+    def construct_features(self, params, prob_features):
+        """Helper function to construct feature vector from parameter vector.
+
+        Args:
+            params: Dict of param values; keys are self.sampled_params,
+                values are numpy arrays of specific param values.
+            prob_features: list of strings, desired features for classifier.
+        """
+        feature_vec = np.array([])
+        # h, r = params['h'], params['r']
+        mu, w = params['mu'], params['w']
+
+        for feature in prob_features:
+            if feature == "h":
+                feature_vec = np.hstack((feature_vec, h))
+            elif feature == "r":
+                feature_vec = np.hstack((feature_vec, r))
+            elif feature == "mu":
+                feature_vec = np.hstack((feature_vec, mu))
+            elif feature == "w":
+                feature_vec = np.hstack((feature_vec, w))
+            else:
+                print('Feature {} is unknown'.format(feature))
+
+        return feature_vec
