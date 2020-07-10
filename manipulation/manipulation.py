@@ -183,7 +183,7 @@ class Manipulation(Problem):
         for p in self.sampled_params:
             self.mlopt_prob_parameters[p].value = params[p]
 
-        self.mlopt_prob_parameters['y'].value = strat
+        self.mlopt_prob_parameters['y'].value = strat.flatten()
 
         ## TODO(pculbertson): allow different sets of params to vary.
 
