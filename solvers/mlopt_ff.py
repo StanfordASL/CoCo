@@ -305,7 +305,7 @@ class MLOPT_FF(Solver):
             str_idxs = np.insert(str_idxs, 0, 0)[:-1]
         strategy_tuples = [strategy_tuples[ii] for ii in str_idxs]
 
-        prob_success, cost, n_evals = False, np.Inf, max_evals
+        prob_success, cost, n_evals, optvals = False, np.Inf, max_evals, None
         for ii, str_tuple in enumerate(strategy_tuples):
             y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
             for ii_obs in range(self.problem.n_obs):
@@ -316,11 +316,11 @@ class MLOPT_FF(Solver):
                 print("Strategy was not correctly found!")
                 return False, np.Inf, total_time, n_evals
 
-            prob_success, cost, solve_time = self.problem.solve_pinned(prob_params, y_guess, solver=solver)
+            prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=solver)
 
             total_time += solve_time
             n_evals = ii+1
             if prob_success:
                 break
 
-        return prob_success, cost, total_time, n_evals
+        return prob_success, cost, total_time, n_evals, optvals

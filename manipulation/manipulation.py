@@ -114,6 +114,8 @@ class Manipulation(Problem):
         # contact forces; one for each point, for each basis direction
         f = [cp.Variable((3,12)) for _ in range(N)]
 
+        self.mlopt_prob_variables = {'a': a}    # TODO(acauligi): how to read 'f' off later?
+
         # maximize weighted polyhedron volume
         obj = w.T @ a
 
@@ -192,16 +194,20 @@ class Manipulation(Problem):
         self.mlopt_prob.solve(solver=solver)
 
         solve_time = self.mlopt_prob.solver_stats.solve_time
+        a_star, y_star = None, strat
+        f_star = [None for f_var in self.bin_prob_variables['f']]
         if self.mlopt_prob.status == 'optimal':
             prob_success = True
             cost = self.mlopt_prob.value
+            a_star = self.mlopt_prob_variables['a'].value
+            f_star = [f_var.value for f_var in self.bin_prob_variables['f']]
 
         # Clear any saved params
         for p in self.sampled_params:
             self.mlopt_prob_parameters[p].value = None
         self.mlopt_prob_parameters['y'].value = None
 
-        return prob_success, cost, solve_time
+        return prob_success, cost, solve_time, (a_star, f_star, y_star)
 
     def which_M(self):
         pass
