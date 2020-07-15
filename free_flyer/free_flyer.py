@@ -114,6 +114,7 @@ class FreeFlyer(Problem):
         # Variables
         x = cp.Variable((2*self.n,self.N)) # state
         u = cp.Variable((self.m,self.N-1))  # control
+        self.mlopt_prob_variables = {'x':x, 'u':u}
 
         # Parameters
         x0 = cp.Parameter(2*self.n)
@@ -229,16 +230,19 @@ class FreeFlyer(Problem):
         self.mlopt_prob.solve(solver=solver)
 
         solve_time = self.mlopt_prob.solver_stats.solve_time
+        x_star, u_star, y_star = None, None, strat
         if self.mlopt_prob.status == 'optimal':
             prob_success = True
             cost = self.mlopt_prob.value
+            x_star = self.mlopt_prob_variables['x'].value
+            u_star = self.mlopt_prob_variables['u'].value
 
         # Clear any saved params
         for p in self.sampled_params:
             self.mlopt_prob_parameters[p].value = None
         self.mlopt_prob_parameters['y'].value = None
 
-        return prob_success, cost, solve_time
+        return prob_success, cost, solve_time, (x_star, u_star, y_star)
 
     def which_M(self, x, obstacles, eq_tol=1e-5, ineq_tol=1e-5):
         """Method to check which big-M constraints are active.
