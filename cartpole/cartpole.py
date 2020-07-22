@@ -204,7 +204,18 @@ class Cartpole(Problem):
         
         # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
-        self.bin_prob.solve(solver=solver)
+        if solver == cp.MOSEK:
+            msk_param_dict = {}
+            msk_param_dict['MSK_IPAR_PRESOLVE_USE'] = 0
+            msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
+
+            self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
+        elif solver == cp.GUROBI:
+            grb_param_dict = {}
+            grb_param_dict['Presolve'] = 0
+            # grb_param_dict['Threads'] = 1
+            grb_param_dict['FeasibilityTol'] = 1e-9
+            self.bin_prob.solve(solver=solver, **grb_param_dict)
         solve_time = self.bin_prob.solver_stats.solve_time
 
         x_star, u_star, y_star = None, None, None
