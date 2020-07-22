@@ -159,9 +159,17 @@ class Manipulation(Problem):
         prob_success, cost, solve_time = False, np.Inf, np.Inf
         a_star, y_star = None, None
         f_star = [None for f_var in self.bin_prob_variables['f']]
-        self.bin_prob.solve(solver=solver)
+        if solver == cp.MOSEK:
+            msk_param_dict = {}
+            msk_param_dict['MSK_IPAR_PRESOLVE_USE'] = 0
+            msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
 
+            self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
+        else:
+            print('Only MOSEK supported for this problem')
+            return prob_success, cost, solve_time, (a_star, f_star, y_star)
         solve_time = self.bin_prob.solver_stats.solve_time
+
         if self.bin_prob.status == 'optimal':
             prob_success = True
             cost = self.bin_prob.value

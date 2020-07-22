@@ -39,6 +39,8 @@ class FreeFlyer(Problem):
           self.posmin, self.posmax, self.velmin, self.velmax, \
           self.umin, self.umax = prob_params
 
+        self.H = 64
+        self.W = int(self.posmax[0] / self.posmax[1] * self.H)
         self.H, self.W = 32, 32
 
         self.init_bin_problem()
@@ -189,8 +191,18 @@ class FreeFlyer(Problem):
         
         # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
+        if solver == cp.MOSEK:
+            msk_param_dict = {}
+            msk_param_dict['MSK_IPAR_PRESOLVE_USE'] = 0
+            msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
 
-        self.bin_prob.solve(solver=solver)
+            self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
+        elif solver == cp.GUROBI:
+            grb_param_dict = {}
+            grb_param_dict['Presolve'] = 0
+            # grb_param_dict['Threads'] = 1
+            grb_param_dict['FeasibilityTol'] = 1e-9
+            self.bin_prob.solve(solver=solver, **grb_param_dict)
         solve_time = self.bin_prob.solver_stats.solve_time
 
         x_star, u_star, y_star = None, None, None
