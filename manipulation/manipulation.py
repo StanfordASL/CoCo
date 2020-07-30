@@ -1,5 +1,6 @@
 import os
 import cvxpy as cp
+import yaml
 import pickle
 import numpy as np
 import sys
@@ -161,8 +162,8 @@ class Manipulation(Problem):
         f_star = [None for f_var in self.bin_prob_variables['f']]
         if solver == cp.MOSEK:
             msk_param_dict = {}
-            msk_param_dict['MSK_IPAR_PRESOLVE_USE'] = 0
-            msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
+            with open(os.path.join(os.environ['MLOPT'], 'config/mosek.yaml')) as file:
+                msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
         else:
