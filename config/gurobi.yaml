@@ -1,0 +1,4 @@
+Presolve: 0
+TimeLimit: 25. 
+# Threads: 1
+# FeasibilityTol: 1e-9

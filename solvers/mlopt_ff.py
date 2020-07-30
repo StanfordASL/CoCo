@@ -314,7 +314,7 @@ class MLOPT_FF(Solver):
                 y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.problem.N-1))
             if (y_guess < 0).any():
                 print("Strategy was not correctly found!")
-                return False, np.Inf, total_time, n_evals
+                return False, np.Inf, total_time, n_evals, optvals
 
             prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=solver)
 

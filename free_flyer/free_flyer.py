@@ -1,9 +1,10 @@
 import os
 import cvxpy as cp
+import yaml
 import pickle
 import numpy as np
-import pdb
 import sys
+import pdb
 
 sys.path.insert(1, os.environ['MLOPT'])
 
@@ -192,16 +193,17 @@ class FreeFlyer(Problem):
         # solve problem with cvxpy
         prob_success, cost, solve_time = False, np.Inf, np.Inf
         if solver == cp.MOSEK:
+            # See: https://docs.mosek.com/9.1/dotnetfusion/param-groups.html#doc-param-groups
             msk_param_dict = {}
-            msk_param_dict['MSK_IPAR_PRESOLVE_USE'] = 0
-            msk_param_dict['MSK_IPAR_NUM_THREADS'] = 1
+            with open(os.path.join(os.environ['MLOPT'], 'config/mosek.yaml')) as file:
+                msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
         elif solver == cp.GUROBI:
             grb_param_dict = {}
-            grb_param_dict['Presolve'] = 0
-            # grb_param_dict['Threads'] = 1
-            grb_param_dict['FeasibilityTol'] = 1e-9
+            with open(os.path.join(os.environ['MLOPT'], 'config/gurobi.yaml')) as file:
+                grb_param_dict = yaml.load(file, Loader=yaml.FullLoader)
+
             self.bin_prob.solve(solver=solver, **grb_param_dict)
         solve_time = self.bin_prob.solver_stats.solve_time
 
