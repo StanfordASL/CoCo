@@ -84,13 +84,15 @@ class Regression(Solver):
                 prob_params[k] = params[k][ii]
             self.features[ii] = self.problem.construct_features(prob_params, self.prob_features)
 
-    def setup_network(self, depth=3, neurons=32):
+    def setup_network(self, depth=3, neurons=32, device_id=0):
+        self.device = torch.device('cuda:{}'.format(device_id))
+
         ff_shape = [self.n_features]
         for ii in range(depth):
             ff_shape.append(neurons)
         ff_shape.append(self.n_y)
 
-        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
+        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -136,12 +138,12 @@ class Regression(Solver):
                 # zero the parameter gradients
                 opt.zero_grad()
 
-                inputs = Variable(torch.from_numpy(X[idx,:])).float().cuda()
-                y_true = Variable(torch.from_numpy(Y[idx,:])).float().cuda()
+                inputs = Variable(torch.from_numpy(X[idx,:])).float().to(device=self.device)
+                y_true = Variable(torch.from_numpy(Y[idx,:])).float().to(device=self.device)
 
                 # forward + backward + optimize
                 outputs = model(inputs)
-                loss = training_loss(outputs, y_true).float().cuda()
+                loss = training_loss(outputs, y_true).float().to(device=self.device)
                 loss.backward()
                 opt.step()
 
@@ -151,12 +153,12 @@ class Regression(Solver):
                     rand_idx = list(np.arange(0,X.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
-                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().cuda()
-                    y_out = Variable(torch.from_numpy(Y[test_inds])).float().cuda()
+                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().to(device=self.device)
+                    y_out = Variable(torch.from_numpy(Y[test_inds])).float().to(device=self.device)
 
                     # forward + backward + optimize
                     outputs = model(inputs)
-                    loss = training_loss(outputs, y_out).float().cuda()
+                    loss = training_loss(outputs, y_out).float().to(device=self.device)
                     outputs = Sigmoid()(outputs).round()
                     accuracy = [float(all(torch.eq(outputs[ii],y_out[ii]))) for ii in range(TEST_BATCH_SIZE)]
                     accuracy = np.mean(accuracy)
@@ -177,7 +179,7 @@ class Regression(Solver):
 
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
-        inpt = Variable(torch.from_numpy(features)).float().cuda()
+        inpt = Variable(torch.from_numpy(features)).float().to(device=self.device)
         t0 = time.time()
         out = self.model(inpt).cpu().detach()
         torch.cuda.synchronize()

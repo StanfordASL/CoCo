@@ -94,13 +94,15 @@ class MLOPT(Solver):
 
             self.features[ii] = self.problem.construct_features(prob_params, self.prob_features)
 
-    def setup_network(self, depth=3, neurons=32): 
+    def setup_network(self, depth=3, neurons=32, device_id=0):
+        self.device = torch.device('cuda:{}'.format(device_id))
+
         ff_shape = [self.n_features]
         for ii in range(depth):
             ff_shape.append(neurons)
 
         ff_shape.append(self.n_strategies)
-        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).cuda()
+        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -145,12 +147,12 @@ class MLOPT(Solver):
                 # zero the parameter gradients
                 opt.zero_grad()
 
-                inputs = Variable(torch.from_numpy(X[idx,:])).float().cuda()
-                labels = Variable(torch.from_numpy(Y[idx])).long().cuda()
+                inputs = Variable(torch.from_numpy(X[idx,:])).float().to(device=self.device)
+                labels = Variable(torch.from_numpy(Y[idx])).long().to(device=self.device)
 
                 # forward + backward + optimize
                 outputs = model(inputs)
-                loss = training_loss(outputs, labels).float().cuda()
+                loss = training_loss(outputs, labels).float().to(device=self.device)
                 class_guesses = torch.argmax(outputs,1)
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                 loss.backward()
@@ -163,12 +165,12 @@ class MLOPT(Solver):
                     rand_idx = list(np.arange(0,X.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
-                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().cuda()
-                    labels = Variable(torch.from_numpy(Y[test_inds])).long().cuda()
+                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().to(device=self.device)
+                    labels = Variable(torch.from_numpy(Y[test_inds])).long().to(device=self.device)
 
                     # forward + backward + optimize
                     outputs = model(inputs)
-                    loss = training_loss(outputs, labels).float().cuda()
+                    loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                     verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
@@ -188,7 +190,7 @@ class MLOPT(Solver):
 
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
-        inpt = Variable(torch.from_numpy(features)).float().cuda()
+        inpt = Variable(torch.from_numpy(features)).float().to(device=self.device)
         t0 = time.time()
         scores = self.model(inpt).cpu().detach().numpy()[:]
         torch.cuda.synchronize()
