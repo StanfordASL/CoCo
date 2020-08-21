@@ -1,4 +1,4 @@
-# mlopt-micp 
+# CoCo: Combinatorial Offline, Convex Online
 This repository contains code for [Learning Mixed-Integer Convex Optimization Strategies for Robot Planning and Control](https://arxiv.org/abs/2004.03736) by Abhishek Cauligi\*, Preston Culbertson\*, Bartolomeo Stellato, Dimitris Bertsimas, Mac Schwager, and Marco Pavone (\* denotes equal contribution).
 
 ## Installation ##
