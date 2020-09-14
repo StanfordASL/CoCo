@@ -11,7 +11,7 @@ We also use the [Gurobi](https://support.gurobi.com/hc/en-us/community/posts/360
 
 Further, define an environment variable `MLOPT` that points to the working directory where this packagee is installed.
 
-## Useage ##
+## Usage ##
 This repo contains examples for three systems in robot planning and control:
 1. Cart-pole with contact
 <p align="center"><img width="35%" src="img/cart-pole.png"/></p>
@@ -22,13 +22,13 @@ This repo contains examples for three systems in robot planning and control:
 3. Dexterous grasping
 <p align="center"><img width="35%" src="img/dexterous_manipulation.png"/></p>
 
-The MICP for each problem is defined in `{system}/problem.jl` using either the [JuMP](https://github.com/JuliaOpt/JuMP.jl) or [Convex](https://github.com/JuliaOpt/Convex.jl) modeling framework. The `{system}/data_collection.ipynb` notebook must be run first to generate the MICP datasets later used in training.
+The MICP for each problem is defined in `{system}/problem.jl` using either the [CVXPY](https://www.cvxpy.org) modeling framework. The `{system}/data_generation.ipynb` notebook must be run first to generate the MICP datasets later used in training.
 
-Each system has a `{system}.ipynb` notebook that steps through the strategy construction, classifier training, and evaluation of the trained strategy predictions. The neural network models are trained separately using Python scripts found in the `pytorch` directory and the strategy and network parameters are saved in the `models` directory.
+Each system has a `{system}_dev.ipynb` notebook that steps through the strategy construction, classifier training, and evaluation of the trained strategy predictions.
 
 
 ## Quick Start ##
 An example notebook can be run through:
 ```
-jupyter notebook cartpole.ipynb 
+jupyter notebook cartpole_dev.ipynb 
 ```
