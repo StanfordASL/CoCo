@@ -1,3 +1,5 @@
+import numpy as np
+
 def obs_intersect(obs_1, obs_2):
     intersect = True
     if obs_1[1] < obs_2[0] or \
