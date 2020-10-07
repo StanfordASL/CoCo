@@ -117,8 +117,7 @@ class FreeFlyer(Problem):
         # Variables
         x = cp.Variable((2*self.n,self.N)) # state
         u = cp.Variable((self.m,self.N-1))  # control
-        slack = cp.Variable((4*self.n_obs,self.N-1), nonneg=True)
-        self.mlopt_prob_variables = {'x':x, 'u':u, 'slack':slack}
+        self.mlopt_prob_variables = {'x':x, 'u':u}
 
         # Parameters
         x0 = cp.Parameter(2*self.n)
@@ -144,8 +143,8 @@ class FreeFlyer(Problem):
               yvar_min = 4*i_obs + self.n*i_dim
               yvar_max = 4*i_obs + self.n*i_dim + 1
 
-              cons += [x[i_dim,i_t+1] <= o_min + M*y[yvar_min,i_t] + slack[yvar_min,i_t]]
-              cons += [-x[i_dim,i_t+1] <= -o_max + M*y[yvar_max,i_t] + slack[yvar_max,i_t]]
+              cons += [x[i_dim,i_t+1] <= o_min + M*y[yvar_min,i_t]]
+              cons += [-x[i_dim,i_t+1] <= -o_max + M*y[yvar_max,i_t]]
 
           for i_t in range(self.N-1):
             yvar_min, yvar_max = 4*i_obs, 4*(i_obs+1)
@@ -168,7 +167,7 @@ class FreeFlyer(Problem):
           cons += [cp.norm(u[:,kk]) <= self.umax]
 
         M = 1000. # big M value
-        lqr_cost = M*cp.sum(slack)     # slack variable penalty
+        lqr_cost = 0.
         # l2-norm of lqr_cost
         for kk in range(self.N):
           lqr_cost += cp.quad_form(x[:,kk]-xg, self.Q)
@@ -209,20 +208,19 @@ class FreeFlyer(Problem):
             self.bin_prob.solve(solver=solver, **grb_param_dict)
         solve_time = self.bin_prob.solver_stats.solve_time
 
-        x_star, u_star, y_star, slack_star = None, None, None, None
-        if self.bin_prob.status == 'optimal':
+        x_star, u_star, y_star = None, None, None
+        if self.bin_prob.status == 'optimal' or self.bin_prob.status == 'optimal_inaccurate':
             prob_success = True
             cost = self.bin_prob.value
             x_star = self.bin_prob_variables['x'].value
             u_star = self.bin_prob_variables['u'].value
             y_star = self.bin_prob_variables['y'].value.astype(int)
-            # slack_star = self.bin_prob_variables['slack'].value
 
         # Clear any saved params
         for p in self.sampled_params:
             self.bin_prob_parameters[p].value = None
 
-        return prob_success, cost, solve_time, (x_star, u_star, y_star, slack_star)
+        return prob_success, cost, solve_time, (x_star, u_star, y_star)
 
     def solve_pinned(self, params, strat, solver=cp.MOSEK):
         """High-level method to solve MICP with pinned params & integer values.
@@ -247,20 +245,19 @@ class FreeFlyer(Problem):
         self.mlopt_prob.solve(solver=solver)
 
         solve_time = self.mlopt_prob.solver_stats.solve_time
-        x_star, u_star, y_star, slack_star = None, None, strat, None
+        x_star, u_star, y_star = None, None, strat
         if self.mlopt_prob.status == 'optimal':
             prob_success = True
             cost = self.mlopt_prob.value
             x_star = self.mlopt_prob_variables['x'].value
             u_star = self.mlopt_prob_variables['u'].value
-            slack_star = self.mlopt_prob_variables['slack'].value
 
         # Clear any saved params
         for p in self.sampled_params:
             self.mlopt_prob_parameters[p].value = None
         self.mlopt_prob_parameters['y'].value = None
 
-        return prob_success, cost, solve_time, (x_star, u_star, y_star, slack_star)
+        return prob_success, cost, solve_time, (x_star, u_star, y_star)
 
     def which_M(self, x, obstacles, eq_tol=1e-5, ineq_tol=1e-5):
         """Method to check which big-M constraints are active.

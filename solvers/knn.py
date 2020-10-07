@@ -91,14 +91,13 @@ class KNN(Solver):
 
         y_guesses = np.zeros((self.knn, self.n_y), dtype=int)
         for ii,idx in enumerate(ind_max):
-            jj = np.where(self.labels[:,0] == idx)[0]
+            jj = np.where(self.labels[:,0] == idx)[0][0]
             y_guesses[ii] = self.labels[jj,1:]
 
         prob_success, cost, n_evals, optvals = False, np.Inf, len(y_guesses), None
         for ii,idx in enumerate(ind_max):
-            y_guess = y_guesses[ii]
-
             # weirdly need to reshape in reverse order of cvxpy variable shape
+            y_guess = y_guesses[ii]
             y_guess = np.reshape(y_guess, self.y_shape)
 
             prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=solver)

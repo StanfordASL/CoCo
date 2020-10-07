@@ -1,4 +1,5 @@
 Presolve: 0
-TimeLimit: 25. 
+TimeLimit: 25.
+# SolutionLimit: 1
 # Threads: 1
-# FeasibilityTol: 1e-9
+# FeasibilityTol: 0.000000001
