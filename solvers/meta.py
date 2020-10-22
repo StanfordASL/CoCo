@@ -1,3 +1,4 @@
+import pdb
 import time
 import random
 import sys
@@ -9,6 +10,7 @@ import torch
 from torch import nn
 from torch import optim
 from torch.nn import functional as F
+import torch.multiprocessing as mp
 from torch.utils.data import TensorDataset, DataLoader
 from torch.autograd import Variable
 from torch.utils.tensorboard import SummaryWriter
@@ -30,14 +32,14 @@ class Meta(MLOPT_FF):
     def __init__(self, system, problem, prob_features, n_evals=2):
         super().__init__(system, problem, prob_features)
 
-        self.update_lr = 0.01
-        self.meta_lr = 0.001
+        self.update_lr = 1e-5
+        self.meta_lr = 0.01
         self.n_way = 5
         self.k_spt = 1
         self.k_qry = 15
         self.task_num = 4
-        self.update_step = 5
-        self.update_step_test = 10
+        self.update_step = 1
+        self.update_step_test = 1
         self.margin = 10.
 
     def construct_strategies(self, n_features, train_data, device_id=1):
@@ -50,9 +52,10 @@ class Meta(MLOPT_FF):
         model_fn = os.path.join(os.getcwd(), model_fn)
         self.model_fn = model_fn.format(self.system, now)
         feas_fn = 'MetaCoCoFF_feas_{}_{}.pt'
+        feas_fn = os.path.join(os.getcwd(), feas_fn)
         self.feas_fn = feas_fn.format(self.system, now)
 
-        self.feas_model = deepcopy(self.model)
+        self.feas_model = deepcopy(self.model).to(device=self.device)
 
     def load_network(self, coco_model_fn, feas_model_fn=""):
         super().load_network(coco_model_fn)
@@ -125,11 +128,10 @@ class Meta(MLOPT_FF):
         CHECKPOINT_AFTER = int(1000)
 
         NUM_META_PROBLEMS = np.maximum(int(np.ceil(BATCH_SIZE / self.problem.n_obs)), 10)
-        UPDATE_STEP = 1
 
         model = self.model
         feas_model = self.feas_model
-        writer = SummaryWriter("".format(summary_writer_fn))
+        writer = SummaryWriter("{}".format(summary_writer_fn))
 
         params = train_data[0]
         X = self.features[:self.problem.n_obs*self.num_train]
@@ -138,6 +140,14 @@ class Meta(MLOPT_FF):
 
         training_loss = torch.nn.CrossEntropyLoss()
         meta_opt = torch.optim.Adam(model.parameters(), lr=self.meta_lr, weight_decay=0.00001)
+
+        def solve_pinned_worker(prob_params, y_guesses, idx, return_dict):
+            return_dict[idx] = False
+            # Sometimes Mosek fails, so try again with Gurobi
+            try:
+                return_dict[idx] = self.problem.solve_pinned(prob_params[idx], y_guesses[idx], solver=cp.MOSEK)[0]
+            except:
+                return_dict[idx] = self.problem.solve_pinned(prob_params[idx], y_guesses[idx], solver=cp.GUROBI)[0]
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
@@ -150,65 +160,92 @@ class Meta(MLOPT_FF):
             indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
 
             for ii,idx in enumerate(indices):
-
                 # fast_weights are network weights for feas_model with descent steps taken
                 fast_weights = list(feas_model.parameters())
-                for _ in range(UPDATE_STEP):
-                    inner_loss = torch.zeros(1)
+                for _ in range(self.update_step):
+                    inner_loss = torch.zeros(1).to(device=self.device)
 
                     # Update feas_model to be using fast_weights
                     self.copy_last(feas_model, fast_weights)
                     self.copy_all_but_last(feas_model, fast_weights)
 
-                    for __ in range(NUM_META_PROBLEMS):
-                        idx_val = np.random.randint(0,self.num_train)
+                    idx_vals = np.random.randint(0,self.num_train, NUM_META_PROBLEMS)
 
-                        params = train_data[0]
+                    prob_params_list = []
+                    y_guesses = np.zeros((NUM_META_PROBLEMS, 4*self.problem.n_obs, self.problem.N-1))
 
+                    # Compute feature vectors for each of the indices in idx_vals
+                    # Note each problem itself has self.problem.n_obs task features
+                    ff_inputs_inner = torch.zeros((NUM_META_PROBLEMS*self.problem.n_obs, self.n_features)).to(device=self.device)
+                    cnn_inputs_inner = torch.zeros((NUM_META_PROBLEMS*self.problem.n_obs, 3, self.problem.H, self.problem.W)).to(device=self.device)
+
+                    for ii_meta, idx_val in enumerate(idx_vals):
                         prob_params = {}
                         for k in params:
                             prob_params[k] = params[k][self.cnn_features_idx[idx_val][0]]
+                        prob_params_list.append(prob_params)
 
-                        ff_inputs_inner = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
-                        ff_inputs_inner = Variable(ff_inputs_inner.repeat(self.problem.n_obs,1)).float().to(device=self.device)
+                        ff_inner = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
+                        ff_inputs_inner[self.problem.n_obs*ii_meta:self.problem.n_obs*(ii_meta+1)] = Variable(ff_inner.repeat(self.problem.n_obs,1)).float().to(device=self.device)
 
                         X_cnn_inner = np.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W))
                         for ii_obs in range(self.problem.n_obs):
                             X_cnn_inner[ii_obs] = self.problem.construct_cnn_features(prob_params, \
                                             self.prob_features, \
                                             ii_obs=ii_obs)
-                        cnn_inputs_inner = Variable(torch.from_numpy(X_cnn_inner)).float().to(device=self.device)
+                        cnn_inputs_inner[self.problem.n_obs*ii_meta:self.problem.n_obs*(ii_meta+1)] = Variable(torch.from_numpy(X_cnn_inner)).float().to(device=self.device)
 
-                        scores = model(cnn_inputs_inner, ff_inputs_inner).detach().cpu().numpy()
-                        class_labels = np.argmax(scores, axis=1)
+                    class_scores = model(cnn_inputs_inner, ff_inputs_inner).detach().cpu().numpy()
+                    class_labels = np.argmax(class_scores, axis=1)      # Predicted strategy index for each features of length NUM_META_PROBLEMS*self.problem.n_obs
 
-                        y_guess = np.zeros((4*self.problem.n_obs, self.problem.N-1))
-                        for cl_ii,cl in enumerate(class_labels):
+                    feas_scores = feas_model(cnn_inputs_inner, ff_inputs_inner)
+
+                    for ii_meta in range(NUM_META_PROBLEMS):
+                        # Grab strategy indices for a particular problem
+                        class_labels_prb = class_labels[self.problem.n_obs*ii_meta:self.problem.n_obs*(ii_meta+1)]
+                        for cl_ii, cl in enumerate(class_labels_prb):
                             cl_idx = np.where(self.labels[:,0] == cl)[0][0]
-                            y_obs = self.labels[cl_idx,1:]
-                            y_guess[4*cl_ii:4*(cl_ii+1)] = np.reshape(y_obs, (4, self.problem.N-1))
+                            y_obs = self.labels[cl_idx, 1:]
+                            y_guesses[ii_meta, 4*cl_ii:4*(cl_ii+1)] = np.reshape(y_obs, (4, self.problem.N-1))
 
-                        # Sometimes Mosek fails, so try again with Gurobi
+                    prob_success_dict = {}
+                    for ii_meta in range(NUM_META_PROBLEMS):
+                        prob_success_dict[ii_meta] = False
                         try:
-                            prob_success = self.problem.solve_pinned(prob_params, y_guess, solver=cp.MOSEK)[0]
+                            prob_success_dict[ii_meta] = self.problem.solve_pinned(prob_params_list[ii_meta], y_guesses[ii_meta], solver=cp.MOSEK)[0]
                         except:
-                            prob_success = self.problem.solve_pinned(prob_params, y_guess, solver=cp.GUROBI)[0]
+                            prob_success_dict[ii_meta] = self.problem.solve_pinned(prob_params_list[ii_meta], y_guesses[ii_meta], solver=cp.GUROBI)[0]
 
-                        losses = torch.zeros(8,1)
+                    # self.model.share_memory()
+                    # manager = mp.Manager()
+                    # prob_success_dict = manager.dict()
+                    # processes = []
+                    # for process_idx in range(NUM_META_PROBLEMS):
+                    #     p = mp.Process(target=solve_pinned_worker, \
+                    #       args=[prob_params_list, y_guesses, process_idx, prob_success_dict])
+                    #     p.start()
+                    #     processes.append(p)
+                    # for p in processes:
+                    #     p.join()
 
-                        feas_scores = feas_model(cnn_inputs_inner, ff_inputs_inner)
+                    for ii_meta in range(NUM_META_PROBLEMS):
+                        # Grab strategy indices and feasibility scores for a particular problem
+                        class_labels_prb = class_labels[self.problem.n_obs*ii_meta:self.problem.n_obs*(ii_meta+1)]
+                        feas_scores_prb = feas_scores[self.problem.n_obs*ii_meta:self.problem.n_obs*(ii_meta+1)]
+
+                        feas_loss = torch.zeros(1).to(device=self.device)
                         for ii_obs in range(self.problem.n_obs):
-                            losses[ii_obs] = feas_scores[ii_obs,class_labels[ii_obs]]
+                            feas_loss += feas_scores_prb[ii_obs, class_labels_prb[ii_obs]]
 
-                        if prob_success:
+                        if prob_success_dict[ii_meta]:
                             # If problem feasible, push scores to positive value
-                            inner_loss += torch.relu(self.margin - torch.sum(losses))
+                            inner_loss += torch.relu(self.margin - feas_loss)
                         else:
                             # If problem infeasible, push scores to negative value
-                            inner_loss += torch.relu(self.margin + torch.sum(losses))
+                          inner_loss += torch.relu(self.margin + feas_loss)
+                    inner_loss /= float(NUM_META_PROBLEMS)
 
                     # Descent step on feas_model network weights
-                    inner_loss /= float(NUM_META_PROBLEMS)
                     grad = torch.autograd.grad(inner_loss, fast_weights)
                     fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
 
@@ -270,4 +307,5 @@ class Meta(MLOPT_FF):
                     running_loss = 0.
 
                 itr += 1
-        print(itr)
+            if itr % 10 == 0:
+                print(itr)
