@@ -103,7 +103,9 @@ class Regression(Solver):
     def load_network(self, fn_regressor_model):
         if os.path.exists(fn_regressor_model):
             print('Loading presaved regression model from {}'.format(fn_regressor_model))
-            self.model.load_state_dict(torch.load(fn_regressor_model))
+            saved_params = list(torch.load(fn_regressor_model).values())
+            for ii in range(len(saved_params)):
+                self.model.vars[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_regressor_model
 
     def train(self, verbose=True):

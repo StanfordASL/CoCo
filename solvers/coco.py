@@ -113,7 +113,9 @@ class CoCo(Solver):
     def load_network(self, fn_classifier_model):
         if os.path.exists(fn_classifier_model):
             print('Loading presaved classifier model from {}'.format(fn_classifier_model))
-            self.model.load_state_dict(torch.load(fn_classifier_model))
+            saved_params = list(torch.load(fn_classifier_model).values())
+            for ii in range(len(saved_params)):
+                self.model.vars[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_classifier_model
 
     def train(self, verbose=True):
