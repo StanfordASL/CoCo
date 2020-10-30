@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+from    torch import nn
+from    torch.nn import functional as F
 
 class FFNet(torch.nn.Module):
     """Simple class to implement a feed-forward neural network in PyTorch.
@@ -16,23 +18,37 @@ class FFNet(torch.nn.Module):
             shape: list of ints describing network shape, including input & output size.
             activation: a torch.nn function specifying the network activation.
         """
-        super(FFNet, self).__init__()
+        super().__init__()
         self.shape = shape
-        self.layers = []
         self.activation = activation ##TODO(pculbertson): make it possible use >1 activation... maybe? who cares
+
+        self.vars = nn.ParameterList()
+
         for ii in range(0,len(shape)-1):
-            self.layers.append(torch.nn.Linear(shape[ii],shape[ii+1]))
+            weight_ii = nn.Parameter(torch.ones(shape[ii+1], shape[ii]))
+            torch.nn.init.kaiming_normal_(weight_ii)
+            self.vars.append(weight_ii)
 
-        self.layers = torch.nn.ModuleList(self.layers)
+            bias_ii = nn.Parameter(torch.zeros(shape[ii+1]))
+            self.vars.append(bias_ii)
 
-    def forward(self, x):
+    def forward(self, x, vars=None):
         "Performs a forward pass on x, a numpy array of size (-1,shape[0])"
-        for ii in range(0,len(self.layers)-1):
-            x = self.layers[ii](x)
-            if self.activation:
-              x = self.activation(x)
+        if vars is None:
+            vars = self.vars
 
-        return self.layers[-1](x)
+        idx = 0
+        for ii in range(len(self.shape)-1):
+            w_ii, b_ii = vars[idx], vars[idx+1]
+            x = F.linear(x, w_ii, b_ii)
+
+            if self.ff_activation:
+                x = F.relu(x, inplace=True)
+            idx += 2
+
+        w_ii, b_ii = vars[idx], vars[idx+1]
+        x = F.linear(x, w_ii, b_ii)
+        return x
 
 class CNNet(torch.nn.Module):
     """PyTorch Module which implements a combined CNN-feedforward network for node classification.
@@ -67,7 +83,7 @@ class CNNet(torch.nn.Module):
             ff_activation: nonlinear activation to be used after each ff layer
             pool: pooling to be added after each layer. if None, no pooling. if scalar, same pooling for each layer.
         """
-        super(CNNet, self).__init__()
+        super().__init__()
         N = len(channels)-1 #number of conv layers
         if type(kernel) is int:
             self.kernel = [kernel]*N
@@ -80,34 +96,38 @@ class CNNet(torch.nn.Module):
         self.conv_activation = conv_activation
         self.ff_activation = ff_activation
 
-        self.conv_layers = []
-        self.pool_layers = []
-        self.ff_layers = []
+        self.ff_shape = ff_shape
+        self.channels = channels
+        self.vars = nn.ParameterList()
+
         W, H = input_size
         for ii in range(0,len(channels)-1):
-            self.conv_layers.append(torch.nn.Conv2d(channels[ii],channels[ii+1],self.kernel[ii],
-                stride=self.stride[ii],padding=self.padding[ii]))
             W = int(1+(W-self.kernel[ii]+2*self.padding[ii])/self.stride[ii])
             H = int(1+(H-self.kernel[ii]+2*self.padding[ii])/self.stride[ii])
+
+            weight_ii = nn.Parameter(torch.ones(channels[ii+1], channels[ii], self.kernel[ii], self.kernel[ii]))
+            torch.nn.init.kaiming_normal_(weight_ii)
+            self.vars.append(weight_ii)
+
+            bias_ii = nn.Parameter(torch.ones(channels[ii+1]))
+            self.vars.append(bias_ii)
+
             if self.pool[ii]:
                 if W % self.pool[ii] != 0 or H % self.pool[ii] != 0:
                     raise ValueError('trying to pool by non-factor')
                 W, H = W/self.pool[ii], H/self.pool[ii]
-                self.pool_layers.append(torch.nn.MaxPool2d(self.pool[ii]))
-            else:
-                self.pool_layers.append(None)
 
         cnn_output_size = W*H*channels[-1]+num_features
         shape = np.concatenate(([cnn_output_size], ff_shape))
         for ii in range(0,len(shape)-1):
-            self.ff_layers.append(torch.nn.Linear(shape[ii],shape[ii+1]))
+            weight_ii = nn.Parameter(torch.ones(shape[ii+1], shape[ii]))
+            torch.nn.init.kaiming_normal_(weight_ii)
+            self.vars.append(weight_ii)
 
-        self.conv_layers = torch.nn.ModuleList(self.conv_layers)
-        self.ff_layers = torch.nn.ModuleList(self.ff_layers)
-        if pool:
-            self.pool_layers = torch.nn.ModuleList(self.pool_layers)
-    
-    def forward(self, image_batch, feature_batch):
+            bias_ii = nn.Parameter(torch.zeros(shape[ii+1]))
+            self.vars.append(bias_ii)
+
+    def forward(self, image_batch, feature_batch, vars=None):
         """Performs a network forward pass on images/features. Images go through CNN, these features are
             concatenated with the real-valued features, and passed through feed-forward network.
         
@@ -119,19 +139,35 @@ class CNNet(torch.nn.Module):
             
         Usage: cnn = CNNet(...); outs = cnn(images_in,features_in)
         """
-        x = image_batch
-        for ii in range(0,len(self.conv_layers)):
-            x = self.conv_layers[ii](x)
-            if self.conv_activation:
-                x = self.conv_activation(x)
-            if self.pool_layers[ii]:
-                x = self.pool_layers[ii](x)
+        if vars is None:
+            vars = self.vars
 
+        N = len(self.channels)-1 #number of conv layers
+
+        x = image_batch
+        idx = 0
+        for ii in range(N):
+            w_ii, b_ii = vars[idx], vars[idx+1]
+            x = F.conv2d(x, w_ii, b_ii, stride=self.stride[ii], padding=self.padding[ii])
+            if self.conv_activation:
+                x = F.relu(x, inplace=True)
+            if self.pool[ii]:
+                x = F.max_pool2d(x, self.pool[ii], self.pool[ii], 0)
+            idx += 2
+
+        # flatten
+        # x = x.view(x.size(0), -1)
         x = torch.flatten(x,start_dim=1)
         x = torch.cat((x,feature_batch),dim=1)
-        for ii in range(0,len(self.ff_layers)-1):
-            x = self.ff_layers[ii](x)
+
+        for ii in range(len(self.ff_shape)-1):
+            w_ii, b_ii = vars[idx], vars[idx+1]
+            x = F.linear(x, w_ii, b_ii)
+
             if self.ff_activation:
-                x = self.ff_activation(x)
+                x = F.relu(x, inplace=True)
+            idx += 2
         
-        return self.ff_layers[-1](x)
+        w_ii, b_ii = vars[idx], vars[idx+1]
+        x = F.linear(x, w_ii, b_ii)
+        return x
