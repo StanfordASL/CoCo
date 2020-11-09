@@ -13,6 +13,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn import Sigmoid
+from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
 sys.path.insert(1, os.environ['CoCo'])
@@ -45,7 +46,7 @@ class CoCo_FF(Solver):
         self.training_params['TRAINING_ITERATIONS'] = int(1500)
         self.training_params['BATCH_SIZE'] = 64
         self.training_params['CHECKPOINT_AFTER'] = int(1000)
-        self.training_params['SAVEPOINT_AFTER'] = int(30000)
+        self.training_params['SAVEPOINT_AFTER'] = int(3000)
         self.training_params['TEST_BATCH_SIZE'] = 32
 
     def construct_strategies(self, n_features, train_data, test_data=None):
@@ -149,7 +150,7 @@ class CoCo_FF(Solver):
                 self.model.vars[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_classifier_model
 
-    def train(self, train_data=None, verbose=True):
+    def train(self, train_data=None, verbose=True, summary_writer_fn='runs/mlopt_ff'):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -160,6 +161,7 @@ class CoCo_FF(Solver):
 
         model = self.model
         model.to(device=self.device)
+        writer = SummaryWriter("{}".format(summary_writer_fn))
 
         X = self.features[:self.problem.n_obs*self.num_train]
         X_cnn = None
@@ -237,12 +239,15 @@ class CoCo_FF(Solver):
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
-                    verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
+
+                    writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/accuracy', accuracy.item(), itr)
+                    running_loss = 0.
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.state_dict(), self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
-                    # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
