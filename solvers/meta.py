@@ -33,14 +33,18 @@ class Meta(MLOPT_FF):
     def __init__(self, system, problem, prob_features, n_evals=2):
         super().__init__(system, problem, prob_features)
 
-        self.update_lr = 1e-3
+        self.training_params['TRAINING_ITERATIONS'] = int(250)
+        self.training_params['BATCH_SIZE'] = 128
+        self.training_params['TEST_BATCH_SIZE'] = 32
+        self.training_params['CHECKPOINT_AFTER'] = int(100)
+        self.training_params['SAVEPOINT_AFTER'] = int(200)
+        self.training_params['NUM_META_PROBLEMS'] = 3
+
+        self.update_lr = 1e-5
         self.meta_lr = 1e-3
         self.n_way = 5
-        self.k_spt = 1
-        self.k_qry = 15
-        self.task_num = 4
-        self.update_step = 2
-        self.update_step_test = 1
+        self.update_step = 1
+        self.update_step_test = 2
         self.margin = 10.
 
     def construct_strategies(self, n_features, train_data, device_id=1):
@@ -58,8 +62,14 @@ class Meta(MLOPT_FF):
 
         self.feas_model = deepcopy(self.model).to(device=self.device)
 
-    def load_network(self, coco_model_fn, feas_model_fn=""):
-        super().load_network(coco_model_fn)
+    def load_network(self, coco_model_fn, override_model_fn, feas_model_fn=""):
+        if os.path.exists(coco_model_fn):
+            print('Loading presaved classifier model from {}'.format(coco_model_fn))
+            saved_params = list(torch.load(coco_model_fn).values())
+            for ii in range(len(saved_params)):
+                self.model.vars[ii].data.copy_(saved_params[ii])
+            if override_model_fn:
+                self.model_fn = coco_model_fn
 
         if os.path.exists(feas_model_fn):
             print('Loading presaved feasibility model from {}'.format(feas_model_fn))
@@ -70,6 +80,7 @@ class Meta(MLOPT_FF):
             self.feas_fn = feas_model_fn
         else:
             self.copy_shared_params(self.feas_model, self.model)
+            self.copy_last(self.feas_model, list(self.model.parameters()))
 
     def copy_shared_params(self, target, source):
         """
@@ -97,16 +108,12 @@ class Meta(MLOPT_FF):
         target_weights[-2].data.copy_(source_data[-2].data)
         target_weights[-1].data.copy_(source_data[-1].data)
 
-    def train(self, train_data, summary_writer_fn):
+    def train(self, train_data, summary_writer_fn, verbose=False):
         # grab training params
-        BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
         BATCH_SIZE = self.training_params['BATCH_SIZE']
-        CHECKPOINT_AFTER = self.training_params['CHECKPOINT_AFTER']
-        SAVEPOINT_AFTER = self.training_params['SAVEPOINT_AFTER']
         TEST_BATCH_SIZE = self.training_params['TEST_BATCH_SIZE']
-
-        NUM_META_PROBLEMS = np.maximum(int(np.ceil(BATCH_SIZE / self.problem.n_obs)), 10)
+        NUM_META_PROBLEMS = self.training_params['NUM_META_PROBLEMS']
 
         model = self.model
         feas_model = self.feas_model
@@ -143,8 +150,6 @@ class Meta(MLOPT_FF):
                 # fast_weights are network weights for feas_model with descent steps taken
                 fast_weights = list(feas_model.parameters())
                 for _ in range(self.update_step):
-                    inner_loss = torch.zeros(1).to(device=self.device)
-
                     # Update feas_model to be using fast_weights
                     self.copy_last(feas_model, fast_weights)
                     self.copy_all_but_last(feas_model, fast_weights)
@@ -233,10 +238,8 @@ class Meta(MLOPT_FF):
                 cnn_inputs = torch.from_numpy(X_cnn).float().to(device=self.device)
 
                 # Pass inner loop weights to MLOPT classifier (except last layer)
-                # self.copy_all_but_last(model, fast_weights)
                 model_weights = list(model.parameters())
-                model_weights[:-2] = fast_weights[:-2]
-
+                model_weights[:-2] = fast_weights[:-2]    # Copies all but last layer of feasibility classifier
                 outputs = model(cnn_inputs, ff_inputs, vars=model_weights)
 
                 loss = training_loss(outputs, labels).float().to(device=self.device)
@@ -252,7 +255,7 @@ class Meta(MLOPT_FF):
                 self.copy_last(feas_model, [fw.detach() for fw in fast_weights])
                 self.copy_shared_params(feas_model, model)
 
-                if itr % CHECKPOINT_AFTER == 0:
+                if itr % self.training_params['CHECKPOINT_AFTER'] == 0:
                     rand_idx = list(np.arange(0,X.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
@@ -272,17 +275,19 @@ class Meta(MLOPT_FF):
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
-                    print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
 
-                if itr % SAVEPOINT_AFTER == 0:
-                    torch.save(model.state_dict(), self.model_fn)
-                    torch.save(feas_model.state_dict(), self.feas_fn)
-                    writer.add_scalar('Loss/train', running_loss / float(SAVEPOINT_AFTER), itr)
+                    writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/accuracy', accuracy.item(), itr)
                     running_loss = 0.
 
+                if itr % self.training_params['SAVEPOINT_AFTER'] == 0:
+                    torch.save(model.state_dict(), self.model_fn)
+                    torch.save(feas_model.state_dict(), self.feas_fn)
                 itr += 1
-            if itr % 10 == 0:
-                print(itr)
+
+        torch.save(model.state_dict(), self.model_fn)
+        torch.save(feas_model.state_dict(), self.feas_fn)
 
     def finetuning(self, test_data, summary_writer_fn, n_evals=2, max_evals=16):
         """
@@ -295,12 +300,15 @@ class Meta(MLOPT_FF):
         model, feas_model = self.model, self.feas_model
         inner_training_loss = torch.nn.HingeEmbeddingLoss(margin=self.margin, reduction='mean')
 
+        writer = SummaryWriter("{}".format(summary_writer_fn))
+
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         rand_idx = list(np.arange(0,n_test))
         random.shuffle(rand_idx)
         indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
 
-        for ii,idx_vals in enumerate(indices):
+        percent_succ = []
+        for itr, idx_vals in enumerate(indices):
             # Construct features for each problem in this batch
             # Placeholder inputs for computing class scores for all problems in a batch
             ff_inputs = torch.zeros((BATCH_SIZE*self.problem.n_obs, self.n_features)).to(device=self.device)
@@ -342,6 +350,7 @@ class Meta(MLOPT_FF):
             feature_is_feasible = [False]*ff_inputs.shape[0]    # True if feas, False if infeasible
             feature_str_idxs = [0]*ff_inputs.shape[0]           # Which strategy was used for a feature
 
+            n_succ = 0
             for prb_idx, idx_val in enumerate(idx_vals):
                 prob_params = {}
                 for k in params.keys():
@@ -354,13 +363,13 @@ class Meta(MLOPT_FF):
                 else:
                     str_idxs = np.insert(str_idxs, 0, 0)[:-1]
 
-                strategy_tuples_prb = [strategy_tuples[ii] for ii in str_idxs]
+                strategy_tuples_prb = [strategy_tuples[str_ii] for str_ii in str_idxs]
                 prob_success = False
 
                 # grab class scores for this prb_idx; has self.problem.n_obs rows and self.n_evals columns
                 ind_max = class_labels[self.problem.n_obs*prb_idx:self.problem.n_obs*(prb_idx+1)]
 
-                for ii, str_tuple in enumerate(strategy_tuples_prb):
+                for _, str_tuple in enumerate(strategy_tuples_prb):
                     if prob_success:
                         continue
 
@@ -372,7 +381,7 @@ class Meta(MLOPT_FF):
                         y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.problem.N-1))
                     if (y_guess < 0).any():
                         print("Strategy was not correctly found!")
-                        return False
+                        return percent_succ
 
                     try:
                         prob_success = self.problem.solve_pinned(prob_params, y_guess, solver=cp.MOSEK)[0]
@@ -380,6 +389,7 @@ class Meta(MLOPT_FF):
                         prob_success = self.problem.solve_pinned(prob_params, y_guess, solver=cp.GUROBI)[0]
 
                     if prob_success:
+                        n_succ += 1
                         # If feasible solution found, mark all of these features as feasible training points
                         for ii_obs in range(self.problem.n_obs):
                             feature_is_feasible[self.problem.n_obs*prb_idx+ii_obs] = True
@@ -416,6 +426,11 @@ class Meta(MLOPT_FF):
             grad = torch.autograd.grad(inner_loss, feas_model.parameters())
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, feas_model.parameters())))
 
-            # self.copy_all_but_last(model, feas_model.vars)
+            # Update feas_model weights
+            self.copy_last(feas_model, [fw.detach() for fw in fast_weights])
+            self.copy_shared_params(feas_model, model)
 
-        return True
+            percent_succ += [float(n_succ) / float(BATCH_SIZE)]
+            writer.add_scalar('Meta/finetune_accuracy', percent_succ[-1], itr)
+
+        return percent_succ
