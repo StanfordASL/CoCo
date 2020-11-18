@@ -33,7 +33,7 @@ Mosek==9.2.5
 multiprocess==0.70.9
 nbconvert==5.6.1
 nbformat==5.0.6
-notebook==6.0.3
+notebook==6.1.5
 numpy==1.18.4
 osqp==0.6.1
 packaging==20.3
