@@ -42,9 +42,7 @@ class Meta(MLOPT_FF):
 
         self.update_lr = 1e-5
         self.meta_lr = 1e-3
-        self.n_way = 5
         self.update_step = 1
-        self.update_step_test = 2
         self.margin = 10.
 
     def construct_strategies(self, n_features, train_data, device_id=1):
@@ -60,14 +58,18 @@ class Meta(MLOPT_FF):
         feas_fn = os.path.join(os.getcwd(), feas_fn)
         self.feas_fn = feas_fn.format(self.system, now)
 
-        self.feas_model = deepcopy(self.model).to(device=self.device)
+        self.shared_params = list(self.model.parameters())[:-2]
+        self.coco_last_layer = list(self.model.parameters())[-2:]
+        self.feas_last_layer = list(self.model.parameters())[-2:]
 
     def load_network(self, coco_model_fn, override_model_fn, feas_model_fn=""):
         if os.path.exists(coco_model_fn):
             print('Loading presaved classifier model from {}'.format(coco_model_fn))
             saved_params = list(torch.load(coco_model_fn).values())
-            for ii in range(len(saved_params)):
-                self.model.vars[ii].data.copy_(saved_params[ii])
+            for ii in range(len(saved_params)-2):
+                self.shared_params[ii].data.copy_(saved_params[ii])
+            self.coco_last_layer[-2].data.copy_(saved_params[-2])
+            self.coco_last_layer[-1].data.copy_(saved_params[-1])
             if override_model_fn:
                 self.model_fn = coco_model_fn
 
@@ -79,8 +81,8 @@ class Meta(MLOPT_FF):
                 self.feas_model.vars[ii].data.copy_(saved_params[ii])
             self.feas_fn = feas_model_fn
         else:
-            self.copy_shared_params(self.feas_model, self.model)
-            self.copy_last(self.feas_model, list(self.model.parameters()))
+            for ii in range(len(self.coco_last_layer)):
+                self.feas_last_layer[ii].data.copy_(self.coco_last_layer[ii])
 
     def copy_shared_params(self, target, source):
         """
@@ -116,7 +118,6 @@ class Meta(MLOPT_FF):
         NUM_META_PROBLEMS = self.training_params['NUM_META_PROBLEMS']
 
         model = self.model
-        feas_model = self.feas_model
         writer = SummaryWriter("{}".format(summary_writer_fn))
 
         params = train_data[0]
@@ -126,7 +127,8 @@ class Meta(MLOPT_FF):
 
         training_loss = torch.nn.CrossEntropyLoss()
         inner_training_loss = torch.nn.HingeEmbeddingLoss(margin=self.margin, reduction='mean')
-        meta_opt = torch.optim.Adam(model.parameters(), lr=self.meta_lr, weight_decay=0.00001)
+        all_params = list(self.shared_params+self.coco_last_layer+self.feas_last_layer)
+        meta_opt = torch.optim.Adam(all_params, lr=self.meta_lr, weight_decay=0.00001)
 
         def solve_pinned_worker(prob_params, y_guesses, idx, return_dict):
             return_dict[idx] = False
@@ -147,13 +149,11 @@ class Meta(MLOPT_FF):
             indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
 
             for ii,idx in enumerate(indices):
+                print('Got to iteration {}\n'.format(itr))
                 # fast_weights are network weights for feas_model with descent steps taken
-                fast_weights = list(feas_model.parameters())
-                for _ in range(self.update_step):
-                    # Update feas_model to be using fast_weights
-                    self.copy_last(feas_model, fast_weights)
-                    self.copy_all_but_last(feas_model, fast_weights)
+                fast_weights = self.shared_params + self.feas_last_layer
 
+                for _ in range(self.update_step):
                     idx_vals = np.random.randint(0,self.num_train, NUM_META_PROBLEMS)
                     prob_params_list = []
 
@@ -182,10 +182,12 @@ class Meta(MLOPT_FF):
                         cnn_inputs_inner[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
 
                     # Use strategy classifier to identify high ranking strategies for each feature
-                    class_scores = model(cnn_inputs_inner, ff_inputs_inner).detach().cpu().numpy()
-                    class_labels = np.argmax(class_scores, axis=1)      # Predicted strategy index for each features of length NUM_META_PROBLEMS*self.problem.n_obs
+                    class_scores = self.model(cnn_inputs_inner, ff_inputs_inner, vars=list(self.shared_params+self.coco_last_layer)).detach().cpu().numpy()
 
-                    feas_scores = feas_model(cnn_inputs_inner, ff_inputs_inner, vars=fast_weights)
+                    # Predicted strategy index for each features of length NUM_META_PROBLEMS*self.problem.n_obs
+                    class_labels = np.argmax(class_scores, axis=1)
+
+                    feas_scores = self.model(cnn_inputs_inner, ff_inputs_inner, vars=fast_weights)
 
                     y_guesses = -1*np.ones((NUM_META_PROBLEMS, 4*self.problem.n_obs, self.problem.N-1), dtype=int)
                     for prb_idx in range(NUM_META_PROBLEMS):
@@ -222,7 +224,7 @@ class Meta(MLOPT_FF):
                     inner_loss = inner_training_loss(losses, labels).to(device=self.device)
 
                     # Descent step on feas_model network weights
-                    grad = torch.autograd.grad(inner_loss, fast_weights)
+                    grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
                     fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
 
                 ff_inputs = torch.from_numpy(X[idx,:]).float().to(device=self.device)
@@ -238,9 +240,7 @@ class Meta(MLOPT_FF):
                 cnn_inputs = torch.from_numpy(X_cnn).float().to(device=self.device)
 
                 # Pass inner loop weights to MLOPT classifier (except last layer)
-                model_weights = list(model.parameters())
-                model_weights[:-2] = fast_weights[:-2]    # Copies all but last layer of feasibility classifier
-                outputs = model(cnn_inputs, ff_inputs, vars=model_weights)
+                outputs = model(cnn_inputs, ff_inputs, vars=list(fast_weights[:-2]+self.coco_last_layer))
 
                 loss = training_loss(outputs, labels).float().to(device=self.device)
                 running_loss += loss.item()
@@ -252,8 +252,7 @@ class Meta(MLOPT_FF):
                 meta_opt.zero_grad() # zero the parameter gradients
 
                 # Update feas_model weights
-                self.copy_last(feas_model, [fw.detach() for fw in fast_weights])
-                self.copy_shared_params(feas_model, model)
+                self.feas_last_layer = [fw.detach() for fw in fast_weights[-2:]]
 
                 if itr % self.training_params['CHECKPOINT_AFTER'] == 0:
                     rand_idx = list(np.arange(0,X.shape[0]-1))
