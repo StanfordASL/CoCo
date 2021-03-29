@@ -15,8 +15,8 @@ from torch.autograd import Variable
 from torch.nn import Sigmoid
 from datetime import datetime
 
-sys.path.insert(1, os.environ['MLOPT'])
-sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
+sys.path.insert(1, os.environ['CoCo'])
+sys.path.insert(1, os.path.join(os.environ['CoCo'], 'pytorch'))
 
 from core import Problem, Solver 
 from pytorch.models import FFNet, CNNet
@@ -137,7 +137,7 @@ class MLOPT_FF(Solver):
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
-        model_fn = 'mloptff_{}_{}.pt'
+        model_fn = 'CoCoFF_{}_{}.pt'
         model_fn = os.path.join(os.getcwd(), model_fn)
         self.model_fn = model_fn.format(self.system, now)
 
@@ -256,32 +256,30 @@ class MLOPT_FF(Solver):
 
         # Compute forward pass for each obstacle and save the top
         # n_eval's scoring strategies in ind_max
-        ind_max = np.zeros((self.problem.n_obs, self.n_evals), dtype=int)
         total_time = 0.   # start timing forward passes of network
-        for ii_obs in range(self.problem.n_obs):
-            scores = None
 
-            if 'obstacles_map' in self.prob_features:
-                features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=None)
-                inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float()
+        if 'obstacles_map' in self.prob_features:
+            features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=None)
+            inpt = torch.from_numpy(features).repeat(self.problem.n_obs,1).float()
 
-                cnn_features = np.zeros((1, 3,self.problem.H,self.problem.W))
-                cnn_features[0] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
-                # cnn_inpt = Variable(torch.from_numpy(cnn_features)).unsqueeze(0).float()
-                cnn_inpt = Variable(torch.from_numpy(cnn_features)).float()
+            cnn_features = np.zeros((self.problem.n_obs, 3,self.problem.H,self.problem.W))
+            for ii_obs in range(self.problem.n_obs):
+              cnn_features[ii_obs] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=ii_obs)
+            cnn_inpt = torch.from_numpy(cnn_features).float()
 
-                t0 = time.time()
-                scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:].squeeze(0)
-            else:
-                features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
-                inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float()
-                t0 = time.time()
+            t0 = time.time()
+            with torch.no_grad():
+                scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:]
+        else:
+            features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
+            inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float()
+            t0 = time.time()
+            with torch.no_grad():
                 scores = self.model(inpt).cpu().detach().numpy()[:].squeeze(0)
-            torch.cuda.synchronize()
-            total_time += (time.time()-t0)
+        torch.cuda.synchronize()
+        total_time += (time.time()-t0)
 
-            # ii_obs'th row of ind_max contains top scoring indices for that obstacle
-            ind_max[ii_obs] = np.argsort(scores)[-self.n_evals:][::-1]
+        ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]
 
         # Loop through strategy dictionary once
         # Save ii'th stratey in obs_strats dictionary

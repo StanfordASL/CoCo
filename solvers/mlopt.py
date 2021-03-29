@@ -14,15 +14,15 @@ from torch.autograd import Variable
 from torch.nn import Sigmoid
 from datetime import datetime
 
-sys.path.insert(1, os.environ['MLOPT'])
-sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
+sys.path.insert(1, os.environ['CoCo'])
+sys.path.insert(1, os.path.join(os.environ['CoCo'], 'pytorch'))
 
 from core import Problem, Solver 
 from pytorch.models import FFNet
 
-class MLOPT(Solver):
+class CoCo(Solver):
     def __init__(self, system, problem, prob_features, n_evals=10):
-        """Constructor for MLOPT class.
+        """Constructor for CoCo class.
 
         Args:
             system: string for system name e.g. 'cartpole'
@@ -106,7 +106,7 @@ class MLOPT(Solver):
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
-        model_fn = 'mlopt_{}_{}.pt'
+        model_fn = 'CoCo_{}_{}.pt'
         model_fn = os.path.join(os.getcwd(), model_fn)
         self.model_fn = model_fn.format(self.system, now)
 

@@ -5,8 +5,8 @@ import pickle
 import numpy as np
 import sys
 
-sys.path.insert(1, os.environ['MLOPT'])
-sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'manipulation'))
+sys.path.insert(1, os.environ['CoCo'])
+sys.path.insert(1, os.path.join(os.environ['CoCo'], 'manipulation'))
 
 from utils import sample_points
 from core import Problem
@@ -162,7 +162,7 @@ class Manipulation(Problem):
         f_star = [None for f_var in self.bin_prob_variables['f']]
         if solver == cp.MOSEK:
             msk_param_dict = {}
-            with open(os.path.join(os.environ['MLOPT'], 'config/mosek.yaml')) as file:
+            with open(os.path.join(os.environ['CoCo'], 'config/mosek.yaml')) as file:
                 msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
@@ -171,7 +171,7 @@ class Manipulation(Problem):
             return prob_success, cost, solve_time, (a_star, f_star, y_star)
         solve_time = self.bin_prob.solver_stats.solve_time
 
-        if self.bin_prob.status == 'optimal':
+        if self.bin_prob.status in ['optimal', 'optimal_inaccurate'] and self.bin_prob.status not in ['infeasible', 'unbounded']:
             prob_success = True
             cost = self.bin_prob.value
             a_star = self.bin_prob_variables['a'].value

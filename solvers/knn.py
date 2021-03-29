@@ -10,7 +10,7 @@ import torch
 
 from datetime import datetime
 
-sys.path.insert(1, os.environ['MLOPT'])
+sys.path.insert(1, os.environ['CoCo'])
 
 from core import Problem, Solver 
 

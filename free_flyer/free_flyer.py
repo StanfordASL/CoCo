@@ -6,7 +6,7 @@ import numpy as np
 import sys
 import pdb
 
-sys.path.insert(1, os.environ['MLOPT'])
+sys.path.insert(1, os.environ['CoCo'])
 
 from core import Problem
 
@@ -177,7 +177,7 @@ class FreeFlyer(Problem):
 
         self.mlopt_prob = cp.Problem(cp.Minimize(lqr_cost), cons)
 
-    def solve_micp(self, params, solver=cp.MOSEK):
+    def solve_micp(self, params, solver=cp.MOSEK, msk_param_dict=None):
         """High-level method to solve parameterized MICP.
         
         Args:
@@ -195,21 +195,22 @@ class FreeFlyer(Problem):
         prob_success, cost, solve_time = False, np.Inf, np.Inf
         if solver == cp.MOSEK:
             # See: https://docs.mosek.com/9.1/dotnetfusion/param-groups.html#doc-param-groups
-            msk_param_dict = {}
-            with open(os.path.join(os.environ['MLOPT'], 'config/mosek.yaml')) as file:
-                msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
+            if not msk_param_dict:
+              msk_param_dict = {}
+              with open(os.path.join(os.environ['CoCo'], 'config/mosek.yaml')) as file:
+                  msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
         elif solver == cp.GUROBI:
             grb_param_dict = {}
-            with open(os.path.join(os.environ['MLOPT'], 'config/gurobi.yaml')) as file:
+            with open(os.path.join(os.environ['CoCo'], 'config/gurobi.yaml')) as file:
                 grb_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, **grb_param_dict)
         solve_time = self.bin_prob.solver_stats.solve_time
 
         x_star, u_star, y_star = None, None, None
-        if self.bin_prob.status == 'optimal' or self.bin_prob.status == 'optimal_inaccurate':
+        if self.bin_prob.status in ['optimal', 'optimal_inaccurate'] and self.bin_prob.status not in ['infeasible', 'unbounded']:
             prob_success = True
             cost = self.bin_prob.value
             x_star = self.bin_prob_variables['x'].value

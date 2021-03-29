@@ -14,8 +14,8 @@ from torch.autograd import Variable
 from torch.nn import Sigmoid
 from datetime import datetime
 
-sys.path.insert(1, os.environ['MLOPT'])
-sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'pytorch'))
+sys.path.insert(1, os.environ['CoCo'])
+sys.path.insert(1, os.path.join(os.environ['CoCo'], 'pytorch'))
 
 from core import Problem, Solver 
 from pytorch.models import FFNet

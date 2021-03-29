@@ -6,7 +6,7 @@ import numpy as np
 import sys
 import pdb
 
-sys.path.insert(1, os.environ['MLOPT'])
+sys.path.insert(1, os.environ['CoCo'])
 
 from core import Problem
 
@@ -207,20 +207,20 @@ class Cartpole(Problem):
         prob_success, cost, solve_time = False, np.Inf, np.Inf
         if solver == cp.MOSEK:
             msk_param_dict = {}
-            with open(os.path.join(os.environ['MLOPT'], 'config/mosek.yaml')) as file:
+            with open(os.path.join(os.environ['CoCo'], 'config/mosek.yaml')) as file:
                 msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, mosek_params=msk_param_dict)
         elif solver == cp.GUROBI:
             grb_param_dict = {}
-            with open(os.path.join(os.environ['MLOPT'], 'config/gurobi.yaml')) as file:
+            with open(os.path.join(os.environ['CoCo'], 'config/gurobi.yaml')) as file:
                 grb_param_dict = yaml.load(file, Loader=yaml.FullLoader)
 
             self.bin_prob.solve(solver=solver, **grb_param_dict)
         solve_time = self.bin_prob.solver_stats.solve_time
 
         x_star, u_star, y_star = None, None, None
-        if self.bin_prob.status == 'optimal':
+        if self.bin_prob.status in ['optimal', 'optimal_inaccurate'] and self.bin_prob.status not in ['infeasible', 'unbounded']:
             prob_success = True
             cost = self.bin_prob.value
             x_star = self.bin_prob_variables['x'].value

@@ -9,7 +9,7 @@ pip3 install -r requirements.txt
 ```
 We also use the [Gurobi](https://support.gurobi.com/hc/en-us/community/posts/360046430451/comments/360005981732) and [Mosek](https://www.mosek.com/downloads/) commercial solvers for solving our problems.
 
-Further, define an environment variable `MLOPT` that points to the working directory where this packagee is installed.
+Further, define an environment variable `CoCo` that points to the working directory where this packagee is installed.
 
 ## Usage ##
 This repo contains examples for three systems in robot planning and control:
