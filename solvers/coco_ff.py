@@ -18,12 +18,12 @@ from datetime import datetime
 sys.path.insert(1, os.environ['CoCo'])
 sys.path.insert(1, os.path.join(os.environ['CoCo'], 'pytorch'))
 
-from core import Problem, Solver 
+from core import Problem, Solver
 from pytorch.models import FFNet, CNNet
 
-class MLOPT_FF(Solver):
+class CoCo_FF(Solver):
     def __init__(self, system, problem, prob_features, n_evals=2):
-        """Constructor for MLOPT FF class.
+        """Constructor for CoCo FF class.
 
         Args:
             system: string for system name e.g. 'cartpole'
@@ -94,7 +94,7 @@ class MLOPT_FF(Solver):
             for k in params:
                 prob_params[k] = params[k][ii]
 
-            for ii_obs in range(self.problem.n_obs): 
+            for ii_obs in range(self.problem.n_obs):
                 # TODO(acauligi): check if transpose necessary with new pickle save format for Y
                 y_true = np.reshape(self.Y[ii, 4*ii_obs:4*(ii_obs+1),:], (self.n_y))
                 obs_strat = tuple(obs_strats[ii_obs])

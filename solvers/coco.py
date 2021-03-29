@@ -17,7 +17,7 @@ from datetime import datetime
 sys.path.insert(1, os.environ['CoCo'])
 sys.path.insert(1, os.path.join(os.environ['CoCo'], 'pytorch'))
 
-from core import Problem, Solver 
+from core import Problem, Solver
 from pytorch.models import FFNet
 
 class CoCo(Solver):
@@ -126,7 +126,7 @@ class CoCo(Solver):
         TEST_BATCH_SIZE = self.training_params['TEST_BATCH_SIZE']
 
         model = self.model
-        
+
         X = self.features[:self.num_train]
         Y = self.labels[:self.num_train,0]
 
