@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from    torch import nn
 from    torch.nn import functional as F
+import pdb
 
 class FFNet(torch.nn.Module):
     """Simple class to implement a feed-forward neural network in PyTorch.
@@ -20,7 +21,7 @@ class FFNet(torch.nn.Module):
         """
         super().__init__()
         self.shape = shape
-        self.activation = activation ##TODO(pculbertson): make it possible use >1 activation... maybe? who cares
+        self.activation = activation
 
         self.vars = nn.ParameterList()
 
@@ -38,12 +39,12 @@ class FFNet(torch.nn.Module):
             vars = self.vars
 
         idx = 0
-        for ii in range(len(self.shape)-1):
+        for ii in range(len(self.shape)-2):
             w_ii, b_ii = vars[idx], vars[idx+1]
             x = F.linear(x, w_ii, b_ii)
 
-            if self.ff_activation:
-                x = F.relu(x, inplace=True)
+            if self.activation:
+                x = self.activation(x)
             idx += 2
 
         w_ii, b_ii = vars[idx], vars[idx+1]
@@ -150,7 +151,7 @@ class CNNet(torch.nn.Module):
             w_ii, b_ii = vars[idx], vars[idx+1]
             x = F.conv2d(x, w_ii, b_ii, stride=self.stride[ii], padding=self.padding[ii])
             if self.conv_activation:
-                x = F.relu(x, inplace=True)
+                x = self.conv_activation(x)
             if self.pool[ii]:
                 x = F.max_pool2d(x, self.pool[ii], self.pool[ii], 0)
             idx += 2
@@ -165,7 +166,7 @@ class CNNet(torch.nn.Module):
             x = F.linear(x, w_ii, b_ii)
 
             if self.ff_activation:
-                x = F.relu(x, inplace=True)
+                x = self.ff_activation(x)
             idx += 2
         
         w_ii, b_ii = vars[idx], vars[idx+1]
