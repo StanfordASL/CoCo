@@ -372,3 +372,9 @@ class FreeFlyer(Problem):
                 table_img[0, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 1.
 
         return table_img
+
+    def propagate_features(self, feature_vec, u0, prob_features):
+        if "x0" in prob_features:
+            x0 = feature_vec[:2*self.n]
+            feature_vec[:2*self.n] = self.Ak @ x0 + self.Bk @ u0
+        return feature_vec
