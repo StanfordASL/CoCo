@@ -335,3 +335,9 @@ class Cartpole(Problem):
             else:
                 print('Feature {} is unknown'.format(feature))
         return feature_vec
+
+    def propagate_features(self, feature_vec, u0, prob_features):
+        if "x0" in prob_features:
+            x0 = feature_vec[:self.n]
+            feature_vec[:self.n] = self.Ak @ x0 + self.Bk @ u0
+        return feature_vec

@@ -169,7 +169,6 @@ class Meta_FF(CoCo_FF):
                                         ii_obs=ii_obs)
                     cnn_inputs_inner[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
 
-                feas_scores = None
                 for ii_step in range(self.update_step):
                     # Use strategy classifier to identify high ranking strategies for each feature
                     feas_scores = self.model(cnn_inputs_inner, ff_inputs_inner, vars=fast_weights)
@@ -207,6 +206,7 @@ class Meta_FF(CoCo_FF):
 
                             ff_inner = torch.from_numpy(self.problem.propagate_features(feature_vec, u0, self.prob_features))
                             ff_inputs_inner[prb_idx_range] = ff_inner.repeat(self.problem.n_obs,1).float().to(device=self.device)
+
                     prob_success_dict = torch.from_numpy(prob_success_dict).to(device=self.device)
 
                     # Compute hinge loss using class score from each applied strategy
@@ -306,148 +306,3 @@ class Meta_FF(CoCo_FF):
 
         torch.save(model.state_dict(), self.model_fn)
         torch.save(feas_model.state_dict(), self.feas_fn)
-
-    # def finetuning(self, test_data, summary_writer_fn, n_evals=2, max_evals=16):
-    #     """
-    #     Step through test_data and perform inner loop update on self.feas_model
-    #     to fine tune self.model
-    #     """
-    #     params, x_test = test_data[:2]
-    #     n_test = x_test.shape[0]
-
-    #     model, feas_model = self.model, self.feas_model
-
-    #     writer = SummaryWriter("{}".format(summary_writer_fn))
-
-    #     BATCH_SIZE = self.training_params['BATCH_SIZE']
-    #     rand_idx = list(np.arange(0,n_test))
-    #     random.shuffle(rand_idx)
-    #     indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
-
-    #     percent_succ = []
-    #     for itr, idx_vals in enumerate(indices):
-    #         # Construct features for each problem in this batch
-    #         # Placeholder inputs for computing class scores for all problems in a batch
-    #         ff_inputs = torch.zeros((BATCH_SIZE*self.problem.n_obs, self.n_features)).to(device=self.device)
-    #         cnn_inputs = torch.zeros((BATCH_SIZE*self.problem.n_obs, 3, self.problem.H, self.problem.W)).to(device=self.device)
-
-    #         for prb_idx, idx_val in enumerate(idx_vals):
-    #             prob_params = {}
-    #             for k in params:
-    #                 prob_params[k] = params[k][idx_val]
-
-    #             # Feedforward inputs for each problem are identical and repeated self.problem.n_obs times
-    #             ff_inp = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
-    #             ff_inputs[self.problem.n_obs*prb_idx:self.problem.n_obs*(prb_idx+1)] = ff_inp.repeat(self.problem.n_obs,1).float().to(device=self.device)
-
-    #             # CNN
-    #             for ii_obs in range(self.problem.n_obs):
-    #                 cnn_inputs[self.problem.n_obs*prb_idx+ii_obs] = torch.from_numpy(self.problem.construct_cnn_features(prob_params, self.prob_features, \
-    #                                 ii_obs=ii_obs)).float().to(device=self.device)
-
-    #         # Use strategy classifier to identify high ranking strategies for each feature
-    #         class_scores = model(cnn_inputs, ff_inputs).detach().cpu().numpy()
-    #         class_labels = np.argsort(class_scores, axis=1)[:,-self.n_evals:][:,::-1] # Predicted strategy index for each features; size BATCH_SIZE*self.problem.n_obs x self.n_evals
-
-    #         # Loop through strategy dictionary once and save binary solution from strategies
-    #         cl_idxs = np.unique(class_labels.flatten())
-    #         obs_strats = {}   # Dictionary where each (k,v) pair gives (index of a strategy, binary solution)
-    #         for cl_idx in cl_idxs:
-    #             cl_ii = np.where(self.labels[:,0] == cl_idx)[0][0]
-    #             obs_strats[cl_idx] = self.labels[cl_ii, 1:]
-
-    #         # Generate Cartesian product of strategy combinations
-    #         vv = [np.arange(0,self.n_evals) for _ in range(self.problem.n_obs)]
-    #         strategy_tuples = list(itertools.product(*vv))
-    #         # Sample from candidate strategy tuples based on "better" combinations
-    #         probs_str = [1./(np.sum(st)+1.) for st in strategy_tuples]  # lower sum(st) values --> better
-    #         probs_str = probs_str / np.sum(probs_str)
-
-    #         # Need to identify which rows of ff_inputs & cnn_inputs are feasible and which are infeasible
-    #         feature_is_feasible = [False]*ff_inputs.shape[0]    # True if feas, False if infeasible
-    #         feature_str_idxs = [0]*ff_inputs.shape[0]           # Which strategy was used for a feature
-
-    #         n_succ = 0
-    #         for prb_idx, idx_val in enumerate(idx_vals):
-    #             prob_params = {}
-    #             for k in params.keys():
-    #                 prob_params[k] = params[k][idx_val]
-
-    #             str_idxs = np.random.choice(np.arange(0,len(strategy_tuples)), max_evals, p=probs_str)
-    #             # Manually add top-scoring strategy tuples
-    #             if 0 in str_idxs:
-    #                 str_idxs = np.unique(np.insert(str_idxs, 0, 0))
-    #             else:
-    #                 str_idxs = np.insert(str_idxs, 0, 0)[:-1]
-
-    #             strategy_tuples_prb = [strategy_tuples[str_ii] for str_ii in str_idxs]
-    #             prob_success = False
-
-    #             # grab class scores for this prb_idx; has self.problem.n_obs rows and self.n_evals columns
-    #             ind_max = class_labels[self.problem.n_obs*prb_idx:self.problem.n_obs*(prb_idx+1)]
-
-    #             for _, str_tuple in enumerate(strategy_tuples_prb):
-    #                 if prob_success:
-    #                     continue
-
-    #                 # Assemble guess for this strategy tuple
-    #                 y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
-    #                 for ii_obs in range(self.problem.n_obs):
-    #                     # rows of ind_max correspond to ii_obs, column to desired strategy
-    #                     y_obs = obs_strats[ind_max[ii_obs, str_tuple[ii_obs]]]
-    #                     y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.problem.N-1))
-    #                 if (y_guess < 0).any():
-    #                     print("Strategy was not correctly found!")
-    #                     return percent_succ
-
-    #                 try:
-    #                     prob_success = self.problem.solve_pinned(prob_params, y_guess, solver=cp.MOSEK)[0]
-    #                 except:
-    #                     prob_success = self.problem.solve_pinned(prob_params, y_guess, solver=cp.GUROBI)[0]
-
-    #                 if prob_success:
-    #                     n_succ += 1
-    #                     # If feasible solution found, mark all of these features as feasible training points
-    #                     for ii_obs in range(self.problem.n_obs):
-    #                         feature_is_feasible[self.problem.n_obs*prb_idx+ii_obs] = True
-    #                         feature_str_idxs[self.problem.n_obs*prb_idx+ii_obs] = str_tuple[ii_obs]
-    #                 else:
-    #                     # If infeasible solution found, mark all of these features as infeasible training points
-    #                     for ii_obs in range(self.problem.n_obs):
-    #                         feature_is_feasible[self.problem.n_obs*prb_idx+ii_obs] = False
-    #                         feature_str_idxs[self.problem.n_obs*prb_idx+ii_obs] = str_tuple[ii_obs]
-
-    #         scores = feas_model(cnn_inputs, ff_inputs)
-    #         losses, labels = torch.zeros(scores.shape[0]).to(device=self.device), torch.zeros(scores.shape[0]).to(device=self.device)
-
-    #         feas_idxs, infeas_idxs = np.where(feature_is_feasible)[0], np.where(np.logical_not(feature_is_feasible))[0]
-
-    #         # If solution was feasible, label = 1., if infeasible label = -1.
-    #         labels[feas_idxs] = 1.
-    #         labels[infeas_idxs] = -1.
-
-    #         # feas_loss = torch.zeros(1).to(device=self.device)
-    #         for feas_idx in feas_idxs:
-    #             # feas_loss += scores[feas_idx, feature_str_idxs[feas_idx]]
-    #             losses[feas_idx] += scores[feas_idx, feature_str_idxs[feas_idx]]
-
-    #         # infeas_loss = torch.zeros(1).to(device=self.device)
-    #         for infeas_idx in infeas_idxs:
-    #             # infeas_loss += scores[infeas_idx, feature_str_idxs[infeas_idx]]
-    #             losses[infeas_idx] = scores[feas_idx, feature_str_idxs[feas_idx]]
-
-    #         # TODO(acauligi): decide whether to penalize infeasible solutions or not
-    #         inner_loss = inner_training_loss(losses, labels).to(device=self.device)
-
-    #         # Descent step on feas_model network weights
-    #         grad = torch.autograd.grad(inner_loss, feas_model.parameters())
-    #         fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, feas_model.parameters())))
-
-    #         # Update feas_model weights
-    #         self.copy_last(feas_model, [fw.detach() for fw in fast_weights])
-    #         self.copy_shared_params(feas_model, model)
-
-    #         percent_succ += [float(n_succ) / float(BATCH_SIZE)]
-    #         writer.add_scalar('Meta/finetune_accuracy', percent_succ[-1], itr)
-
-    #     return percent_succ
