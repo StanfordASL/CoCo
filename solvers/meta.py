@@ -34,8 +34,8 @@ class Meta(CoCo):
         super().__init__(system, problem, prob_features)
 
         self.training_params['TRAINING_ITERATIONS'] = int(250)
-        self.training_params['BATCH_SIZE'] = 128
-        self.training_params['TEST_BATCH_SIZE'] = 32
+        self.training_params['BATCH_SIZE'] = 32
+        self.training_params['TEST_BATCH_SIZE'] = 8
         self.training_params['CHECKPOINT_AFTER'] = int(100)
         self.training_params['SAVEPOINT_AFTER'] = int(200)
         self.training_params['NUM_META_PROBLEMS'] = 3
@@ -60,7 +60,13 @@ class Meta(CoCo):
 
         self.shared_params = list(self.model.parameters())[:-2]
         self.coco_last_layer = list(self.model.parameters())[-2:]
-        self.feas_last_layer = list(self.model.parameters())[-2:]
+
+        self.feas_last_layer = []
+        for w in self.coco_last_layer:
+            w_ = torch.zeros_like(w, requires_grad=True)
+            with torch.no_grad():
+                w_.data.copy_(w)
+            self.feas_last_layer.append(w_)
 
     def load_network(self, coco_model_fn, override_model_fn, feas_model_fn=""):
         if os.path.exists(coco_model_fn):
@@ -75,40 +81,13 @@ class Meta(CoCo):
 
         if os.path.exists(feas_model_fn):
             print('Loading presaved feasibility model from {}'.format(feas_model_fn))
-            # self.feas_model.load_state_dict(torch.load(feas_model_fn))
-            saved_params = list(torch.load(feas_model_fn).values())
+            saved_params = torch.load(feas_model_fn)
             for ii in range(len(saved_params)):
-                self.feas_model.vars[ii].data.copy_(saved_params[ii])
+                self.feas_last_layer[ii].data.copy_(saved_params[ii])
             self.feas_fn = feas_model_fn
         else:
             for ii in range(len(self.coco_last_layer)):
                 self.feas_last_layer[ii].data.copy_(self.coco_last_layer[ii])
-
-    def copy_shared_params(self, target, source):
-        """
-        Copies all network weights from source NN to target NN
-        except for the last layer
-        """
-        target_weights = list(target.parameters())
-        source_weights = list(source.parameters())
-        for ii in range(len(source_weights)-2):
-            target_weights[ii].data.copy_(source_weights[ii].detach())
-
-    def copy_all_but_last(self, target, source_data):
-        """
-        Updates target NN parameters using list of weights in source_data except for last layer
-        """
-        target_weights = list(target.parameters())
-        for ii in range(len(source_data)-2):
-            target_weights[ii].data.copy_(source_data[ii].data)
-
-    def copy_last(self, target, source_data):
-        """
-        Updates last layer NN parameters in target last layer weights in source_data
-        """
-        target_weights = list(target.parameters())
-        target_weights[-2].data.copy_(source_data[-2].data)
-        target_weights[-1].data.copy_(source_data[-1].data)
 
     def train(self, train_data, summary_writer_fn, verbose=False):
         # grab training params
@@ -174,13 +153,16 @@ class Meta(CoCo):
                         y_guesses[prb_idx] = np.reshape(y_guess, self.y_shape)
 
                     # TODO(acauligi): use multiprocessing to parallelize this
-                    prob_success_dict = np.ones(len(idx))
+                    prob_success_dict = -np.ones(len(idx))
                     for prb_idx, idx_val in enumerate(idx):
-                        prob_success = False
                         try:
-                            prob_success, _, _, optvals = self.problem.solve_pinned(prob_params_list[prb_idx], y_guesses[prb_idx], solver=cp.MOSEK)
+                            try:
+                                prob_success, _, _, optvals = self.problem.solve_pinned(prob_params_list[prb_idx], y_guesses[prb_idx], solver=cp.MOSEK)
+                            except:
+                                prob_success, _, _, optvals = self.problem.solve_pinned(prob_params_list[prb_idx], y_guesses[prb_idx], solver=cp.GUROBI)
                         except:
-                            prob_success, _, _, optvals = self.problem.solve_pinned(prob_params_list[prb_idx], y_guesses[prb_idx], solver=cp.GUROBI)
+                            prob_success = False
+
                         prob_success_dict[prb_idx] = 1. if prob_success else -1.
 
                         # For successful optimization problems, propagate the initial state of robot forward when applicable
@@ -244,8 +226,78 @@ class Meta(CoCo):
 
                 if itr % self.training_params['SAVEPOINT_AFTER'] == 0:
                     torch.save(model.state_dict(), self.model_fn)
-                    torch.save(feas_model.state_dict(), self.feas_fn)
+                    torch.save(self.feas_last_layer, self.feas_fn)
                 itr += 1
 
         torch.save(model.state_dict(), self.model_fn)
         torch.save(feas_model.state_dict(), self.feas_fn)
+
+    def forward(self, prob_params_list, solver=cp.MOSEK):
+        model = self.model
+        n_test = len(prob_params_list)
+
+        inpt = torch.zeros((n_test, self.n_features)).to(device=self.device)
+        for pp_ii, prob_params in enumerate(prob_params_list):
+            features = self.problem.construct_features(prob_params, self.prob_features)
+            inpt[pp_ii] = torch.from_numpy(features).float().to(device=self.device)
+
+        t0 = time.time()
+        scores = self.model(inpt, vars=self.shared_params+self.coco_last_layer).cpu().detach().numpy()[:]
+        fast_weights = self.shared_params + self.feas_last_layer
+        feas_scores = self.model(inpt, vars=fast_weights)
+        torch.cuda.synchronize()
+
+        ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]
+        total_time = time.time()-t0
+
+        y_guesses = -1*np.ones((n_test, self.n_evals, self.n_y), dtype=int)
+        for jj in range(self.num_train):
+            # first index of training label is that strategy's idx
+            label = self.labels[jj]
+            if label[0] in np.unique(ind_max):
+                for ii in range(n_test):
+                    if label[0] in ind_max[ii]:
+                        idx = np.where(ind_max[ii]==label[0])[0][0]
+                        # remainder of training label is that strategy's binary pin
+                        y_guesses[ii,idx] = label[1:]
+
+        prob_successes, costs, solve_times, optvals_list = n_test*[False], n_test*[np.Inf], n_test*[total_time], n_test*[None]
+        inner_loss = torch.zeros(n_test).to(device=self.device)
+        for idx_test in range(n_test):
+            feas_losses = torch.zeros(self.n_evals)
+            prob_success, cost, n_evals, optvals = False, np.Inf, 0, None
+            t0 = time.time()
+            for ii,idx in enumerate(ind_max[idx_test]):
+                y_guess = np.reshape(y_guesses[idx_test,ii], self.y_shape)
+
+                prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver)
+
+                n_evals = ii+1
+
+                sign = 1.0 if prob_success else -1.0
+                feas_loss = feas_scores[idx_test,idx]
+
+                # If problem feasible, push scores to positive value
+                # If problem infeasible, push scores to negative value
+                feas_losses[ii] = torch.relu(self.margin - sign*feas_loss)
+
+                if prob_success:
+                    prob_successes[idx_test] = prob_success
+                    costs[idx_test] = cost
+                    solve_times[idx_test] = time.time()-t0 + total_time
+                    optvals_list[idx_test] = optvals 
+                    break
+
+            # Loss is mean over attempted solves
+            inner_loss[idx_test] = torch.mean(feas_losses[:n_evals])
+
+        # Descent step on feas_model network weights
+        inner_loss = torch.mean(inner_loss)
+        grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
+
+        fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
+
+        self.shared_params = fast_weights[:-2]
+        self.feas_last_layer = fast_weights[-2:]
+
+        return prob_successes, costs, solve_times, optvals_list
