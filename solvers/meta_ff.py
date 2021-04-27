@@ -34,14 +34,13 @@ class Meta_FF(CoCo_FF):
         super().__init__(system, problem, prob_features)
 
         self.training_params['TRAINING_ITERATIONS'] = int(250)
-        self.training_params['BATCH_SIZE'] = 8
-        self.training_params['TEST_BATCH_SIZE'] = 4
-        self.training_params['CHECKPOINT_AFTER'] = int(10)
-        self.training_params['SAVEPOINT_AFTER'] = int(25)
-        self.training_params['NUM_META_PROBLEMS'] = 3
+        self.training_params['BATCH_SIZE'] = 32
+        self.training_params['TEST_BATCH_SIZE'] = 8
+        self.training_params['CHECKPOINT_AFTER'] = int(50)
+        self.training_params['SAVEPOINT_AFTER'] = int(100)
 
         self.update_lr = 1e-5
-        self.meta_lr = 1e-4
+        self.meta_lr = 3e-4
         self.update_step = 1
         self.margin = 10.
 
@@ -81,10 +80,9 @@ class Meta_FF(CoCo_FF):
 
         if os.path.exists(feas_model_fn):
             print('Loading presaved feasibility model from {}'.format(feas_model_fn))
-            # self.feas_model.load_state_dict(torch.load(feas_model_fn))
-            saved_params = list(torch.load(feas_model_fn).values())
+            saved_params = list(torch.load(feas_model_fn))
             for ii in range(len(saved_params)):
-                self.feas_model.vars[ii].data.copy_(saved_params[ii])
+                self.feas_last_layer[ii].data.copy_(saved_params[ii])
             self.feas_fn = feas_model_fn
         else:
             for ii in range(len(self.coco_last_layer)):
@@ -121,7 +119,6 @@ class Meta_FF(CoCo_FF):
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TEST_BATCH_SIZE = self.training_params['TEST_BATCH_SIZE']
-        NUM_META_PROBLEMS = self.training_params['NUM_META_PROBLEMS']
 
         model = self.model
         writer = SummaryWriter("{}".format(summary_writer_fn))
@@ -322,6 +319,7 @@ class Meta_FF(CoCo_FF):
         model = self.model
         n_test = len(prob_params_list)
 
+        t0 = time.time()
         ff_inputs = torch.zeros((n_test*self.problem.n_obs, self.n_features)).to(device=self.device)
         cnn_inputs = torch.zeros((n_test*self.problem.n_obs, 3, self.problem.H, self.problem.W)).to(device=self.device)
         for pp_ii, prob_params in enumerate(prob_params_list):
@@ -341,6 +339,8 @@ class Meta_FF(CoCo_FF):
         fast_weights = self.shared_params + self.feas_last_layer
         feas_scores = self.model(cnn_inputs, ff_inputs, vars=fast_weights)
         torch.cuda.synchronize()
+
+        total_time = time.time()-t0
 
         ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]
 

@@ -38,10 +38,9 @@ class Meta(CoCo):
         self.training_params['TEST_BATCH_SIZE'] = 8
         self.training_params['CHECKPOINT_AFTER'] = int(100)
         self.training_params['SAVEPOINT_AFTER'] = int(200)
-        self.training_params['NUM_META_PROBLEMS'] = 3
 
         self.update_lr = 1e-5
-        self.meta_lr = 1e-3
+        self.meta_lr = 3e-4 
         self.update_step = 1
         self.margin = 10.
 
@@ -94,7 +93,6 @@ class Meta(CoCo):
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TEST_BATCH_SIZE = self.training_params['TEST_BATCH_SIZE']
-        NUM_META_PROBLEMS = self.training_params['NUM_META_PROBLEMS']
 
         model = self.model
         writer = SummaryWriter("{}".format(summary_writer_fn))
