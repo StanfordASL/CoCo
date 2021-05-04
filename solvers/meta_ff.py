@@ -126,16 +126,8 @@ class Meta_FF(CoCo_FF):
         params = train_data[0]
 
         training_loss = torch.nn.CrossEntropyLoss()
-        all_params = list(self.shared_params+self.coco_last_layer+self.feas_last_layer)
-        meta_opt = torch.optim.Adam(all_params, lr=self.meta_lr, weight_decay=0.00001)
-
-        def solve_pinned_worker(prob_params, y_guesses, idx, return_dict):
-            return_dict[idx] = False
-            # Sometimes Mosek fails, so try again with Gurobi
-            try:
-                return_dict[idx] = self.problem.solve_pinned(prob_params[idx], y_guesses[idx], solver=cp.MOSEK)[0]
-            except:
-                return_dict[idx] = self.problem.solve_pinned(prob_params[idx], y_guesses[idx], solver=cp.GUROBI)[0]
+        all_params = self.shared_params + self.coco_last_layer + self.feas_last_layer
+        meta_opt = torch.optim.Adam(all_params, lr=self.meta_lr, weight_decay=self.weight_decay)
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
@@ -148,6 +140,8 @@ class Meta_FF(CoCo_FF):
             indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
 
             for ii,idx in enumerate(indices):
+                meta_opt.zero_grad() # zero the parameter gradients
+
                 # fast_weights are network weights for feas_model with descent steps taken
                 fast_weights = self.shared_params + self.feas_last_layer
 
@@ -163,7 +157,9 @@ class Meta_FF(CoCo_FF):
 
                     prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
 
-                    ff_inputs_inner[prb_idx_range] = torch.from_numpy(self.features[self.problem.n_obs*idx_val:self.problem.n_obs*(idx_val+1), :]).float().to(device=self.device)
+                    # ff_inputs_inner[prb_idx_range] = torch.from_numpy(self.features[self.problem.n_obs*idx_val:self.problem.n_obs*(idx_val+1), :]).float().to(device=self.device)
+                    feature_vec = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
+                    ff_inputs_inner[prb_idx_range] = feature_vec.repeat(self.problem.n_obs,1).float().to(device=self.device)
 
                     X_cnn_inner = np.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W))
                     for ii_obs in range(self.problem.n_obs):
@@ -266,7 +262,6 @@ class Meta_FF(CoCo_FF):
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                 loss.backward()
                 meta_opt.step()
-                meta_opt.zero_grad() # zero the parameter gradients
 
                 if itr % self.training_params['CHECKPOINT_AFTER'] == 0:
                     rand_idx = list(np.arange(0, self.num_train-1))

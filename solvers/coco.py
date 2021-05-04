@@ -39,6 +39,9 @@ class CoCo(Solver):
         self.num_train, self.num_test = 0, 0
         self.model, self.model_fn = None, None
 
+        self.lr = 3e-4
+        self.weight_decay = 0.00001
+
         # training parameters
         self.training_params = {}
         self.training_params['TRAINING_ITERATIONS'] = int(1500)
@@ -133,7 +136,7 @@ class CoCo(Solver):
         Y = self.labels[:self.num_train,0]
 
         training_loss = torch.nn.CrossEntropyLoss()
-        opt = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.00001)
+        opt = optim.Adam(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times

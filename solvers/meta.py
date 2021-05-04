@@ -33,7 +33,7 @@ class Meta(CoCo):
     def __init__(self, system, problem, prob_features, n_evals=2):
         super().__init__(system, problem, prob_features)
 
-        self.training_params['TRAINING_ITERATIONS'] = int(250)
+        self.training_params['TRAINING_ITERATIONS'] = int(500)
         self.training_params['BATCH_SIZE'] = 32
         self.training_params['TEST_BATCH_SIZE'] = 8
         self.training_params['CHECKPOINT_AFTER'] = int(100)
@@ -101,15 +101,7 @@ class Meta(CoCo):
 
         training_loss = torch.nn.CrossEntropyLoss()
         all_params = list(self.shared_params+self.coco_last_layer+self.feas_last_layer)
-        meta_opt = torch.optim.Adam(all_params, lr=self.meta_lr, weight_decay=0.00001)
-
-        def solve_pinned_worker(prob_params, y_guesses, idx, return_dict):
-            return_dict[idx] = False
-            # Sometimes Mosek fails, so try again with Gurobi
-            try:
-                return_dict[idx] = self.problem.solve_pinned(prob_params[idx], y_guesses[idx], solver=cp.MOSEK)[0]
-            except:
-                return_dict[idx] = self.problem.solve_pinned(prob_params[idx], y_guesses[idx], solver=cp.GUROBI)[0]
+        meta_opt = torch.optim.Adam(all_params, lr=self.meta_lr, weight_decay=self.weight_decay)
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
@@ -122,6 +114,8 @@ class Meta(CoCo):
             indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
 
             for ii,idx in enumerate(indices):
+                meta_opt.zero_grad() # zero the parameter gradients
+
                 # fast_weights are network weights for feas_model with descent steps taken
                 fast_weights = self.shared_params + self.feas_last_layer
 
@@ -141,14 +135,12 @@ class Meta(CoCo):
                     # Predicted strategy index for each features
                     class_labels = np.argmax(class_scores, axis=1)
 
-                    y_shape = list(copy(self.y_shape))
-                    y_shape.insert(0, len(idx))
-                    y_guesses = -1*np.ones(y_shape, dtype=int)
+                    y_guesses = []
                     for prb_idx in range(len(idx)):
                         # Grab strategy indices for a particular problem
                         cl_idx = np.where(self.labels[:,0] == class_labels[prb_idx])[0][0]
                         y_guess = self.labels[cl_idx,1:]
-                        y_guesses[prb_idx] = np.reshape(y_guess, self.y_shape)
+                        y_guesses.append(np.reshape(y_guess, self.y_shape))
 
                     # TODO(acauligi): use multiprocessing to parallelize this
                     prob_success_dict = -np.ones(len(idx))
@@ -201,7 +193,6 @@ class Meta(CoCo):
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                 loss.backward()
                 meta_opt.step()
-                meta_opt.zero_grad() # zero the parameter gradients
 
                 if itr % self.training_params['CHECKPOINT_AFTER'] == 0:
                     rand_idx = list(np.arange(0, self.num_train-1))
@@ -217,6 +208,8 @@ class Meta(CoCo):
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
 
+                    verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
+
                     writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
                     writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
                     writer.add_scalar('Loss/accuracy', accuracy.item(), itr)
@@ -225,10 +218,16 @@ class Meta(CoCo):
                 if itr % self.training_params['SAVEPOINT_AFTER'] == 0:
                     torch.save(model.state_dict(), self.model_fn)
                     torch.save(self.feas_last_layer, self.feas_fn)
+                    verbose and print('Saved model at {}'.format(self.model_fn))
+                    verbose and print('Saved feas model at {}'.format(self.feas_fn))
                 itr += 1
+            verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
         torch.save(model.state_dict(), self.model_fn)
-        torch.save(feas_model.state_dict(), self.feas_fn)
+        torch.save(self.feas_last_layer, self.feas_fn)
+
+        print('Saved model at {}'.format(self.model_fn))
+        print('Saved feas model at {}'.format(self.feas_fn))
 
     def forward(self, prob_params_list, solver=cp.MOSEK):
         model = self.model
@@ -240,7 +239,7 @@ class Meta(CoCo):
             inpt[pp_ii] = torch.from_numpy(features).float().to(device=self.device)
 
         t0 = time.time()
-        scores = self.model(inpt, vars=self.shared_params+self.coco_last_layer).cpu().detach().numpy()[:]
+        scores = self.model(inpt, vars=self.shared_params + self.coco_last_layer).cpu().detach().numpy()[:]
         fast_weights = self.shared_params + self.feas_last_layer
         feas_scores = self.model(inpt, vars=fast_weights)
         torch.cuda.synchronize()
@@ -268,7 +267,14 @@ class Meta(CoCo):
             for ii,idx in enumerate(ind_max[idx_test]):
                 y_guess = np.reshape(y_guesses[idx_test,ii], self.y_shape)
 
-                prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver)
+                prob_success, cost, n_evals, optvals = False, np.Inf, 0, None
+                try:
+                    try:
+                        prob_success, cost, n_evals, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=solver)
+                    except:
+                        prob_success, cost, n_evals, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=cp.MOSEK)
+                except:
+                    prob_success, cost, n_evals, optvals = False, np.Inf, 0, None
 
                 n_evals = ii+1
 
