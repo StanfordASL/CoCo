@@ -408,8 +408,6 @@ class Meta_FF(CoCo_FF):
                 ctr += 1
             inner_loss[idx_test] = torch.mean(feas_losses)
 
-        print(sum(prob_successes) / float(len(prob_successes)))
-
         # Descent step on feas_model network weights
         inner_loss = torch.mean(inner_loss)
         grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
