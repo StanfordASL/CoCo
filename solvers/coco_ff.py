@@ -126,7 +126,7 @@ class CoCo_FF(Solver):
         ff_shape.append(self.n_strategies)
         if "obstacles_map" not in self.prob_features:
             ff_shape.insert(0, self.n_features)
-            self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).to(device=self.device)
+            self.model = FFNet(ff_shape, activation='relu', cond_type='all_weights').to(device=self.device)
         else:
             ker = 2
             strd = 2
@@ -137,7 +137,7 @@ class CoCo_FF(Solver):
 
             self.model = CNNet(self.n_features, channels, ff_shape, input_size, \
                   kernel=ker, stride=strd, padding=pd, \
-                  conv_activation=torch.nn.ReLU(), ff_activation=torch.nn.ReLU()).to(device=self.device)
+                  conv_activation='relu', ff_activation='relu').to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -207,7 +207,7 @@ class CoCo_FF(Solver):
                     cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
                     outputs = model(cnn_inputs, ff_inputs)
                 else:
-                    outputs = model(ff_inputs)
+                    outputs = model(ff_inputs, model.z0)
 
                 loss = training_loss(outputs, labels).float().to(device=self.device)
                 class_guesses = torch.argmax(outputs,1)
@@ -237,7 +237,7 @@ class CoCo_FF(Solver):
                         # cnn_inputs = Variable(torch.from_numpy(X_cnn[test_inds,:])).float().to(device=self.device)
                         outputs = model(cnn_inputs, ff_inputs)
                     else:
-                        outputs = model(ff_inputs)
+                        outputs = model(ff_inputs, model.z0)
 
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
