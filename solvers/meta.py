@@ -57,8 +57,8 @@ class Meta(CoCo):
         feas_fn = os.path.join(os.getcwd(), feas_fn)
         self.feas_fn = feas_fn.format(self.system, now)
 
-        self.shared_params = list(self.model.parameters())[:-2]
-        self.coco_last_layer = list(self.model.parameters())[-2:]
+        self.shared_params = list(self.model.z0)[:-2]
+        self.coco_last_layer = list(self.model.z0)[-2:]
 
         self.feas_last_layer = []
         for w in self.coco_last_layer:
@@ -129,8 +129,8 @@ class Meta(CoCo):
 
                 for ii_step in range(self.update_step):
                     # Use strategy classifier to identify high ranking strategies for each feature
-                    feas_scores = self.model(ff_inputs_inner, vars=fast_weights)
-                    class_scores = self.model(ff_inputs_inner, vars=list(self.shared_params+self.coco_last_layer)).detach().cpu().numpy()
+                    feas_scores = model(ff_inputs_inner, fast_weights)
+                    class_scores = model(ff_inputs_inner, self.shared_params+self.coco_last_layer).detach().cpu().numpy()
 
                     # Predicted strategy index for each features
                     class_labels = np.argmax(class_scores, axis=1)
@@ -184,7 +184,7 @@ class Meta(CoCo):
                 labels = torch.from_numpy(self.labels[idx, 0]).long().to(device=self.device)
 
                 # Pass inner loop weights to CoCo classifier (except last layer)
-                outputs = model(ff_inputs, vars=list(fast_weights[:-2]+self.coco_last_layer))
+                outputs = model(ff_inputs, fast_weights[:-2]+self.coco_last_layer)
 
                 loss = training_loss(outputs, labels).float().to(device=self.device)
                 running_loss += loss.item()
@@ -202,7 +202,7 @@ class Meta(CoCo):
                     ff_inputs = torch.from_numpy(self.features[test_inds]).float().to(device=self.device)
                     labels = torch.from_numpy(self.labels[test_inds, 0]).long().to(device=self.device)
 
-                    outputs = model(ff_inputs)
+                    outputs = model(ff_inputs, self.shared_params+self.coco_last_layer).detach().cpu().numpy()
 
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
@@ -239,9 +239,9 @@ class Meta(CoCo):
             inpt[pp_ii] = torch.from_numpy(features).float().to(device=self.device)
 
         t0 = time.time()
-        scores = self.model(inpt, vars=self.shared_params + self.coco_last_layer).cpu().detach().numpy()[:]
+        scores = model(inpt, self.shared_params + self.coco_last_layer).cpu().detach().numpy()[:]
         fast_weights = self.shared_params + self.feas_last_layer
-        feas_scores = self.model(inpt, vars=fast_weights)
+        feas_scores = model(inpt, fast_weights)
         torch.cuda.synchronize()
 
         ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]

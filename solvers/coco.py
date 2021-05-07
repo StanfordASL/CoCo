@@ -105,7 +105,7 @@ class CoCo(Solver):
             ff_shape.append(neurons)
 
         ff_shape.append(self.n_strategies)
-        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).to(device=self.device)
+        self.model = FFNet(ff_shape, activation='relu', cond_type='all_weights').to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -156,7 +156,7 @@ class CoCo(Solver):
                 labels = Variable(torch.from_numpy(Y[idx])).long().to(device=self.device)
 
                 # forward + backward + optimize
-                outputs = model(inputs)
+                outputs = model(inputs, model.z0)
                 loss = training_loss(outputs, labels).float().to(device=self.device)
                 class_guesses = torch.argmax(outputs,1)
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
@@ -174,7 +174,7 @@ class CoCo(Solver):
                     labels = Variable(torch.from_numpy(Y[test_inds])).long().to(device=self.device)
 
                     # forward + backward + optimize
-                    outputs = model(inputs)
+                    outputs = model(inputs, model.z0)
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
