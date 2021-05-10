@@ -195,9 +195,9 @@ class CoCo(Solver):
 
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
-        inpt = Variable(torch.from_numpy(features)).float().to(device=self.device)
+        inpt = Variable(torch.from_numpy(features)).float().unsqueeze(0).to(device=self.device)
         t0 = time.time()
-        scores = self.model(inpt).cpu().detach().numpy()[:]
+        scores = self.model(inpt, self.model.z0).cpu().detach().numpy()[0,:]
         torch.cuda.synchronize()
         total_time = time.time()-t0
         ind_max = np.argsort(scores)[-self.n_evals:][::-1]

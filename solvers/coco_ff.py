@@ -205,7 +205,7 @@ class CoCo_FF(Solver):
                             prob_params[k] = params[k][self.cnn_features_idx[idx_val][0]]
                         X_cnn[idx_ii] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=self.cnn_features_idx[idx_val][1])
                     cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
-                    outputs = model(cnn_inputs, ff_inputs)
+                    outputs = model(cnn_inputs, ff_inputs, model.z0)
                 else:
                     outputs = model(ff_inputs, model.z0)
 
