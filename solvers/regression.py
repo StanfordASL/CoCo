@@ -92,7 +92,7 @@ class Regression(Solver):
             ff_shape.append(neurons)
         ff_shape.append(self.n_y)
 
-        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).to(device=self.device)
+        self.model = FFNet(ff_shape, activation='relu', cond_type='all_weights').to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -144,7 +144,7 @@ class Regression(Solver):
                 y_true = Variable(torch.from_numpy(Y[idx,:])).float().to(device=self.device)
 
                 # forward + backward + optimize
-                outputs = model(inputs)
+                outputs = model(inputs, model.z0)
                 loss = training_loss(outputs, y_true).float().to(device=self.device)
                 loss.backward()
                 opt.step()
@@ -159,7 +159,7 @@ class Regression(Solver):
                     y_out = Variable(torch.from_numpy(Y[test_inds])).float().to(device=self.device)
 
                     # forward + backward + optimize
-                    outputs = model(inputs)
+                    outputs = model(inputs, model.z0)
                     loss = training_loss(outputs, y_out).float().to(device=self.device)
                     outputs = Sigmoid()(outputs).round()
                     accuracy = [float(all(torch.eq(outputs[ii],y_out[ii]))) for ii in range(TEST_BATCH_SIZE)]
@@ -181,12 +181,12 @@ class Regression(Solver):
 
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
-        inpt = Variable(torch.from_numpy(features)).float().to(device=self.device)
+        inpt = Variable(torch.from_numpy(features)).float().unsqueeze(0).to(device=self.device)
         t0 = time.time()
-        out = self.model(inpt).cpu().detach()
+        out = self.model(inpt, self.model.z0).cpu().detach()
         torch.cuda.synchronize()
         total_time = time.time()-t0
-        y_guess = Sigmoid()(out).round().numpy()[:]
+        y_guess = Sigmoid()(out).round().numpy()[0,:]
 
         # weirdly need to reshape in reverse order of cvxpy variable shape
         y_guess = np.reshape(y_guess, self.y_shape[::-1]).T

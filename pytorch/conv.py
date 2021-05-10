@@ -33,7 +33,7 @@ class FuncConv(Layer):
         assert weight.shape[-2] == self.n_in
         assert weight.shape[-1] == self.n_out
 
-        # extra_indices = [ii for ii in range(len(weight.shape)-2)]
+        extra_indices = [ii for ii in range(len(weight.shape)-2)]
 
         batch_dim, c_, h_in, w_in = x.shape
         w_out = int(1+(w_in-self.kernel+2*self.padding)/self.stride)
@@ -42,7 +42,7 @@ class FuncConv(Layer):
         h_f, w_f, _, n_f = weight.shape
         output = torch.zeros(batch_dim, n_f, h_out, w_out).type(x.dtype)
 
-        pd = (self.padding, self.padding) 
+        pd = (self.padding, self.padding)
         x_pad = F.pad(x, pd, "constant", 0.)
         _, _, h_in_pd, w_in_pd = x_pad.shape
 
@@ -51,16 +51,7 @@ class FuncConv(Layer):
                 h_start, w_start = ii, jj
                 h_end, w_end = h_start + h_f, w_start + w_f
                 slc = x_pad[:, :, h_start:h_end, w_start:w_end]
-                output[:,:,idx_ii,idx_jj] = torch.tensordot(slc, weight, dims=([1,2,3], [2,0,1])) + bias 
-            #     for ii in range(h_out):
-            #         for jj in range(w_out):
-            #             h_start, w_start = ii, jj
-            #             h_end, w_end = h_start + h_f, w_start + w_f
-            
-            # #             out_ = torch.matmul(in_[:, :, h_start:h_end, w_start:w_end], w_) + b_
-            # #             output[:,:,ii,jj] = torch.sum(out_, dim=(0,1,2))  + b_
-            #             sliver = in_[:, :, h_start:h_end, w_start:w_end]
-            #             output[:,:,ii,jj] = torch.tensordot(sliver, w_, dims=([1,2,3], [2,0,1]))
+                output[:,:,idx_ii,idx_jj] = torch.tensordot(slc, weight, dims=([1,2,3], [2,0,1])) + bias
 
         # TODO(acauligi): determine when activation should be applied at layer level
         # return self.activation(output)
