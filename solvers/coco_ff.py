@@ -235,7 +235,7 @@ class CoCo_FF(Solver):
                             X_cnn[idx_ii] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=self.cnn_features_idx[idx_val][1])
                         cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
                         # cnn_inputs = Variable(torch.from_numpy(X_cnn[test_inds,:])).float().to(device=self.device)
-                        outputs = model(cnn_inputs, ff_inputs)
+                        outputs = model(cnn_inputs, ff_inputs, model.z0)
                     else:
                         outputs = model(ff_inputs, model.z0)
 
@@ -279,13 +279,13 @@ class CoCo_FF(Solver):
 
             t0 = time.time()
             with torch.no_grad():
-                scores = self.model(cnn_inpt, inpt).cpu().detach().numpy()[:]
+                scores = self.model(cnn_inpt, inpt, self.model.z0).cpu().detach().numpy()[:]
         else:
             features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
             inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float()
             t0 = time.time()
             with torch.no_grad():
-                scores = self.model(inpt).cpu().detach().numpy()[:].squeeze(0)
+                scores = self.model(inpt, self.model.z0).cpu().detach().numpy()[:].squeeze(0)
         torch.cuda.synchronize()
         total_time += (time.time()-t0)
 
