@@ -168,28 +168,6 @@ class CNNet(torch.nn.Module):
             self.pool_layers = torch.nn.ModuleList(self.pool_layers)
 
     def forward(self, image_batch, feature_batch, task_params):
-        # for idx in range(len(channels)-1):
-        #     batch_dim, c_, h_in, w_in = x.shape
-        #     w_out = int(1+(w_in-kernel[idx]+2*padding[idx])/stride[idx])
-        #     h_out = int(1+(h_in-kernel[idx]+2*padding[idx])/stride[idx])
-
-        #     w_, b_ = ws[idx], bs[idx]
-        #     h_f, w_f, _, n_f = w_.shape
-        #     output = torch.zeros(batch_dim, n_f, h_out, w_out).type(x.dtype)
-
-        #     strd = stride[idx]
-        #     pd = (padding[idx], padding[idx])
-        #     x_pad = F.pad(x, pd, "constant", 0.)
-        #     _, _, h_in_pd, w_in_pd = x_pad.shape
-
-        #     for idx_ii, ii in enumerate(range(0,h_in_pd-h_f,strd)):
-        #         for idx_jj, jj in enumerate(range(0,w_in_pd-w_f,strd)):
-        #             h_start, w_start = ii, jj
-        #             h_end, w_end = h_start + h_f, w_start + w_f
-        #             slc = x_pad[:, :, h_start:h_end, w_start:w_end]
-        #             output[:,:,idx_ii,idx_jj] = torch.tensordot(slc, w_, dims=([1,2,3], [2,0,1]))
-        #     x = self.conv_activation(output)
-
         if self.cond_type == 'none':
             # We ignore task parameters if there is no conditioning set. This is
             # usually because Learner was set to Overfit.
@@ -197,7 +175,7 @@ class CNNet(torch.nn.Module):
 
         x = image_batch
         tp_ind = 0
-        for ii in range(len(self.conv_layers) - 1):
+        for ii in range(len(self.conv_layers)):
             if self.cond_type == 'none':
                 x = self.conv_layers[ii](x)
             elif self.cond_type == 'all_weights':
