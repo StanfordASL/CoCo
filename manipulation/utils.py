@@ -3,7 +3,7 @@ import sys
 import cvxpy as cp
 import numpy as np
 
-sys.path.insert(1, os.path.join(os.environ['MLOPT'], 'manipulation'))
+sys.path.insert(1, os.path.join(os.environ['CoCo'], 'manipulation'))
 from halton_sampling import generate_halton_samples
 
 def skew(v):
