@@ -114,6 +114,13 @@ class Meta_FF(CoCo_FF):
         target_weights[-2].data.copy_(source_data[-2].data)
         target_weights[-1].data.copy_(source_data[-1].data)
 
+    def prior(self, batch_size):
+        """
+        Returns a list of prior task_parameters, expanded to batch_size.
+        """
+        return [zz.clone().reshape(1, *zz.shape).expand(
+            batch_size, *zz.shape) for zz in self.z0]
+
     def train(self, train_data, summary_writer_fn, verbose=False):
         # grab training params
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -144,6 +151,9 @@ class Meta_FF(CoCo_FF):
 
                 # fast_weights are network weights for feas_model with descent steps taken
                 fast_weights = self.shared_params + self.feas_last_layer
+
+                # Expand task params to batch size
+                fast_weights = [zz.clone().reshape(1, *zz.shape).expand(len(idx), *zz.shape) for zz in fast_weights]
 
                 # Note each problem itself has self.problem.n_obs task features
                 ff_inputs_inner = torch.zeros((len(idx)*self.problem.n_obs, self.n_features)).to(device=self.device)

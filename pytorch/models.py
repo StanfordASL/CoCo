@@ -86,7 +86,7 @@ class FFNet(torch.nn.Module):
 
 class CNNet(torch.nn.Module):
     def __init__(self,num_features,channels,ff_shape, input_size, kernel=2,stride=2, padding=0,
-        conv_activation='relu',ff_activation='relu',pool=None, cond_type='all_weights'):
+        conv_activation='relu',ff_activation='relu',pool=None, cond_type='mixed_weights'):
         super().__init__()
 
         self.channels = channels
@@ -115,7 +115,7 @@ class CNNet(torch.nn.Module):
         else:
             raise ValueError("unknown conv_activation" + conv_activation)
 
-        if cond_type in ['all_weights', 'none']:
+        if cond_type in ['all_weights', 'mixed_weights', 'none']:
             self.cond_type = cond_type
         else:
             raise ValueError("unknown cond_type" + cond_type)
@@ -133,6 +133,12 @@ class CNNet(torch.nn.Module):
                     channels[ii], channels[ii+1], self.kernel[ii], self.stride[ii], self.padding[ii]))
 
                 self.z0 += self.conv_layers[-1].task_params()
+            elif self.cond_type == 'mixed_weights':
+                self.conv_layers.append(torch.nn.Conv2d(channels[ii],channels[ii+1],self.kernel[ii],
+                    stride=self.stride[ii],padding=self.padding[ii]))
+
+                w_ii, b_ii = list(self.conv_layers[-1].parameters())
+                self.z0 += [w_ii, b_ii]
             elif self.cond_type == 'none':
                 self.conv_layers.append(torch.nn.Conv2d(channels[ii],channels[ii+1],self.kernel[ii],
                     stride=self.stride[ii],padding=self.padding[ii]))
@@ -152,7 +158,7 @@ class CNNet(torch.nn.Module):
         self.ff_shape = np.concatenate(([cnn_output_size], ff_shape))
 
         for ii in range(0,len(self.ff_shape)-1):
-            if self.cond_type == 'all_weights':
+            if self.cond_type in ['all_weights', 'mixed_weights']:
                 self.ff_layers.append(FuncLinear(
                     self.ff_shape[ii],self.ff_shape[ii+1]))
                 self.z0 += self.ff_layers[-1].task_params()
@@ -181,6 +187,10 @@ class CNNet(torch.nn.Module):
             elif self.cond_type == 'all_weights':
                 x = self.conv_layers[ii](x, task_params[tp_ind:tp_ind+2])
                 tp_ind += self.conv_layers[ii].num_params()
+            elif self.cond_type == 'mixed_weights':
+                w_ii, b_ii = task_params[tp_ind:tp_ind+2]
+                x = F.conv2d(x, w_ii, b_ii, stride=self.stride[ii], padding=self.padding[ii])
+                tp_ind += len(list(self.conv_layers[ii].parameters()))
             x = self.conv_activation(x)
             if self.pool_layers[ii]:
                 x = self.pool_layers[ii](x)
@@ -191,14 +201,21 @@ class CNNet(torch.nn.Module):
         for ii in range(len(self.ff_layers) - 1):
             if self.cond_type == 'none':
                 x = self.ff_layers[ii](x)
-            elif self.cond_type == 'all_weights':
+            elif self.cond_type in ['all_weights', 'mixed_weights']:
                 x = self.ff_layers[ii](x, task_params[tp_ind:tp_ind+2])
                 tp_ind += self.ff_layers[ii].num_params()
             x = self.ff_activation(x)
 
         # output layer
-        if self.cond_type == 'all_weights':
+        if self.cond_type in ['all_weights', 'mixed_weights']:
             x = self.ff_layers[-1](x, task_params[tp_ind:])
         else:
             x = self.ff_layers[-1](x)
         return x 
+
+    def prior(self, batch_size):
+        """
+        Returns a list of prior task_parameters, expanded to batch_size.
+        """
+        return [zz.clone().reshape(1, *zz.shape).expand(
+            batch_size, *zz.shape) for zz in self.z0]
