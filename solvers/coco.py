@@ -116,9 +116,9 @@ class CoCo(Solver):
     def load_network(self, fn_classifier_model):
         if os.path.exists(fn_classifier_model):
             print('Loading presaved classifier model from {}'.format(fn_classifier_model))
-            saved_params = list(torch.load(fn_classifier_model).values())
-            for ii in range(len(saved_params)):
-                self.model.vars[ii].data.copy_(saved_params[ii])
+            saved_params = torch.load(fn_classifier_model)
+            for ii in range(len(self.model.z0)):
+                self.model.z0[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_classifier_model
 
     def train(self, verbose=True):
@@ -181,14 +181,14 @@ class CoCo(Solver):
                     verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
 
                 if itr % SAVEPOINT_AFTER == 0:
-                    torch.save(model.state_dict(), self.model_fn)
+                    torch.save(model.z0, self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
                     # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
-        torch.save(model.state_dict(), self.model_fn)
+        torch.save(model.z0, self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
 
         print('Done training')

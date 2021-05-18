@@ -137,7 +137,7 @@ class CoCo_FF(Solver):
 
             self.model = CNNet(self.n_features, channels, ff_shape, input_size, \
                   kernel=ker, stride=strd, padding=pd, \
-                  conv_activation='relu', ff_activation='relu').to(device=self.device)
+                  conv_activation='relu', ff_activation='relu', cond_type='mixed_weights').to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -148,12 +148,12 @@ class CoCo_FF(Solver):
     def load_network(self, fn_classifier_model):
         if os.path.exists(fn_classifier_model):
             print('Loading presaved classifier model from {}'.format(fn_classifier_model))
-            saved_params = list(torch.load(fn_classifier_model).values())
-            for ii in range(len(saved_params)):
-                self.model.vars[ii].data.copy_(saved_params[ii])
+            saved_params = torch.load(fn_classifier_model)
+            for ii in range(len(self.model.z0)):
+                self.model.z0[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_classifier_model
 
-    def train(self, train_data=None, verbose=True, summary_writer_fn='runs/mlopt_ff'):
+    def train(self, train_data=None, verbose=True, summary_writer_fn='runs/coco_ff'):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -176,7 +176,7 @@ class CoCo_FF(Solver):
         Y = self.labels[:self.problem.n_obs*self.num_train,0]
 
         training_loss = torch.nn.CrossEntropyLoss()
-        opt = optim.Adam(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        opt = optim.Adam(model.z0, lr=self.lr, weight_decay=self.weight_decay)
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
@@ -234,7 +234,6 @@ class CoCo_FF(Solver):
                                 prob_params[k] = params[k][self.cnn_features_idx[idx_val][0]]
                             X_cnn[idx_ii] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=self.cnn_features_idx[idx_val][1])
                         cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
-                        # cnn_inputs = Variable(torch.from_numpy(X_cnn[test_inds,:])).float().to(device=self.device)
                         outputs = model(cnn_inputs, ff_inputs, model.z0)
                     else:
                         outputs = model(ff_inputs, model.z0)
@@ -249,13 +248,13 @@ class CoCo_FF(Solver):
                     running_loss = 0.
 
                 if itr % SAVEPOINT_AFTER == 0:
-                    torch.save(model.state_dict(), self.model_fn)
+                    torch.save(model.z0, self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
-        torch.save(model.state_dict(), self.model_fn)
+        torch.save(model.z0, self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
 
         print('Done training')
