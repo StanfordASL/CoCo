@@ -1,4 +1,3 @@
-import pdb
 import time
 import random
 import sys
@@ -34,14 +33,14 @@ class Meta_FF(CoCo_FF):
         super().__init__(system, problem, prob_features)
 
         self.training_params['TRAINING_ITERATIONS'] = int(250)
-        self.training_params['BATCH_SIZE'] = 32
-        self.training_params['TEST_BATCH_SIZE'] = 8
+        self.training_params['BATCH_SIZE'] = 16
+        self.training_params['TEST_BATCH_SIZE'] = 4
         self.training_params['CHECKPOINT_AFTER'] = int(50)
         self.training_params['SAVEPOINT_AFTER'] = int(100)
 
         self.update_lr = 1e-5
         self.meta_lr = 3e-4
-        self.update_step = 1
+        self.update_step = 5
         self.margin = 10.
 
     def construct_strategies(self, n_features, train_data, device_id=1):
@@ -153,7 +152,8 @@ class Meta_FF(CoCo_FF):
                 fast_weights = self.shared_params + self.feas_last_layer
 
                 # Expand task params to batch size
-                fast_weights = [zz.clone().reshape(1, *zz.shape).expand(len(idx), *zz.shape) for zz in fast_weights]
+                batch_size = len(idx)*self.problem.n_obs
+                fast_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in fast_weights]
 
                 # Note each problem itself has self.problem.n_obs task features
                 ff_inputs_inner = torch.zeros((len(idx)*self.problem.n_obs, self.n_features)).to(device=self.device)
@@ -180,11 +180,13 @@ class Meta_FF(CoCo_FF):
 
                 for ii_step in range(self.update_step):
                     # Use strategy classifier to identify high ranking strategies for each feature
-                    feas_scores = self.model(cnn_inputs_inner, ff_inputs_inner, vars=fast_weights)
-                    class_scores = self.model(cnn_inputs_inner, ff_inputs_inner, vars=list(self.shared_params+self.coco_last_layer)).detach().cpu().numpy()
+                    feas_scores = model(cnn_inputs_inner, ff_inputs_inner, fast_weights)
+
+                    opt_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.shared_params+self.coco_last_layer]
+                    class_scores = model(cnn_inputs_inner, ff_inputs_inner, opt_weights)
 
                     # Predicted strategy index for each features
-                    class_labels = np.argmax(class_scores, axis=1)
+                    class_labels = torch.argmax(class_scores, axis=1).detach().cpu().numpy()
 
                     y_guesses = -1*np.ones((len(idx), 4*self.problem.n_obs, self.problem.N-1), dtype=int)
                     for prb_idx in range(len(idx)):
@@ -263,7 +265,10 @@ class Meta_FF(CoCo_FF):
                 labels = torch.from_numpy(labels).long().to(device=self.device)
 
                 # Pass inner loop weights to CoCo classifier (except last layer)
-                outputs = model(cnn_inputs, ff_inputs, vars=list(fast_weights[:-2]+self.coco_last_layer))
+                outer_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.coco_last_layer]
+
+                outer_weights = fast_weights[:-2] + outer_weights
+                outputs = model(cnn_inputs, ff_inputs, outer_weights)
 
                 loss = training_loss(outputs, labels).float().to(device=self.device)
                 running_loss += loss.item()
@@ -299,7 +304,8 @@ class Meta_FF(CoCo_FF):
                     cnn_inputs = torch.from_numpy(cnn_inputs).float().to(device=self.device)
                     labels = torch.from_numpy(labels).long().to(device=self.device)
 
-                    outputs = model(cnn_inputs, ff_inputs)
+                    opt_weights = [zz.clone().reshape(1, *zz.shape).expand(self.problem.n_obs*TEST_BATCH_SIZE, *zz.shape) for zz in model.z0]
+                    outputs = model(cnn_inputs, ff_inputs, opt_weights)
 
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)

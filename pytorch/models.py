@@ -189,7 +189,17 @@ class CNNet(torch.nn.Module):
                 tp_ind += self.conv_layers[ii].num_params()
             elif self.cond_type == 'mixed_weights':
                 w_ii, b_ii = task_params[tp_ind:tp_ind+2]
-                x = F.conv2d(x, w_ii, b_ii, stride=self.stride[ii], padding=self.padding[ii])
+
+                batch_size, out_channels, in_channels, kernel_height, kernel_width = w_ii.shape
+                batch_size, in_channels, in_height, in_width = x.shape
+
+                # magic from: https://discuss.pytorch.org/t/apply-different-convolutions-to-a-batch-of-tensors/56901
+                x_alternate = x.view(1, batch_size*in_channels, in_height, in_width)
+                w_alternate = w_ii.contiguous().view(batch_size*out_channels, in_channels, kernel_height, kernel_width)
+                b_alternate = b_ii.contiguous().view(batch_size*out_channels)
+                x = F.conv2d(x_alternate, w_alternate, b_alternate, stride=self.stride[ii], padding=self.padding[ii], groups=batch_size)
+                x = x.view(batch_size, out_channels, x.size(2), x.size(3))
+
                 tp_ind += len(list(self.conv_layers[ii].parameters()))
             x = self.conv_activation(x)
             if self.pool_layers[ii]:
