@@ -26,9 +26,10 @@ class FuncLinear(Layer):
         assert weight.shape[-2] == self.out_features
         assert weight.shape[-1] == self.in_features
         assert (bias.shape[-1] == self.out_features) or (not bias)
+
         extra_indices = [ii for ii in range(len(weight.shape)-2)]
-        output = x.matmul(weight.permute(*extra_indices, -1, -2))
-        output += bias.unsqueeze(-2)
+        w_ = weight.permute(*extra_indices, -1, -2)
+        output = x.unsqueeze(1).matmul(w_).squeeze(1) + bias
 
         # TODO(acauligi): determine when activation should be applied at layer level
         # return self.activation(output)
