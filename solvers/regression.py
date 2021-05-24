@@ -92,7 +92,7 @@ class Regression(Solver):
             ff_shape.append(neurons)
         ff_shape.append(self.n_y)
 
-        self.model = FFNet(ff_shape, activation=torch.nn.ReLU()).to(device=self.device)
+        self.model = FFNet(ff_shape, activation='relu', cond_type='all_weights').to(device=self.device)
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -103,9 +103,9 @@ class Regression(Solver):
     def load_network(self, fn_regressor_model):
         if os.path.exists(fn_regressor_model):
             print('Loading presaved regression model from {}'.format(fn_regressor_model))
-            saved_params = list(torch.load(fn_regressor_model).values())
-            for ii in range(len(saved_params)):
-                self.model.vars[ii].data.copy_(saved_params[ii])
+            saved_params = torch.load(fn_regressor_model)
+            for ii in range(len(self.model.z0)):
+                self.model.z0[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_regressor_model
 
     def train(self, verbose=True):
@@ -144,7 +144,7 @@ class Regression(Solver):
                 y_true = Variable(torch.from_numpy(Y[idx,:])).float().to(device=self.device)
 
                 # forward + backward + optimize
-                outputs = model(inputs)
+                outputs = model(inputs, model.z0)
                 loss = training_loss(outputs, y_true).float().to(device=self.device)
                 loss.backward()
                 opt.step()
@@ -159,7 +159,7 @@ class Regression(Solver):
                     y_out = Variable(torch.from_numpy(Y[test_inds])).float().to(device=self.device)
 
                     # forward + backward + optimize
-                    outputs = model(inputs)
+                    outputs = model(inputs, model.z0)
                     loss = training_loss(outputs, y_out).float().to(device=self.device)
                     outputs = Sigmoid()(outputs).round()
                     accuracy = [float(all(torch.eq(outputs[ii],y_out[ii]))) for ii in range(TEST_BATCH_SIZE)]
@@ -167,26 +167,26 @@ class Regression(Solver):
                     verbose and print("loss:   "+str(loss.item()) + " , acc: " + str(accuracy))
 
                 if itr % SAVEPOINT_AFTER == 0:
-                    torch.save(model.state_dict(), self.model_fn)
+                    torch.save(model.z0, self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
                     # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
-        torch.save(model.state_dict(), self.model_fn)
+        torch.save(model.z0, self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
 
         print('Done training')
 
     def forward(self, prob_params, solver=cp.MOSEK):
         features = self.problem.construct_features(prob_params, self.prob_features)
-        inpt = Variable(torch.from_numpy(features)).float().to(device=self.device)
+        inpt = Variable(torch.from_numpy(features)).float().unsqueeze(0).to(device=self.device)
         t0 = time.time()
-        out = self.model(inpt).cpu().detach()
+        out = self.model(inpt, self.model.z0).cpu().detach()
         torch.cuda.synchronize()
         total_time = time.time()-t0
-        y_guess = Sigmoid()(out).round().numpy()[:]
+        y_guess = Sigmoid()(out).round().numpy()[0,:]
 
         # weirdly need to reshape in reverse order of cvxpy variable shape
         y_guess = np.reshape(y_guess, self.y_shape[::-1]).T
