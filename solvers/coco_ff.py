@@ -153,7 +153,7 @@ class CoCo_FF(Solver):
                 self.model.z0[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_classifier_model
 
-    def train(self, train_data=None, verbose=True, summary_writer_fn='runs/coco_ff'):
+    def train(self, train_data, summary_writer_fn, verbose=True):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -197,6 +197,8 @@ class CoCo_FF(Solver):
 
                 # forward + backward + optimize
                 outputs = None
+                batch_size = len(idx)
+                opt_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.model.z0]
                 if 'obstacles_map' in self.prob_features:
                     X_cnn = np.zeros((len(idx), 3,self.problem.H,self.problem.W))
                     for idx_ii, idx_val in enumerate(idx):
@@ -205,9 +207,10 @@ class CoCo_FF(Solver):
                             prob_params[k] = params[k][self.cnn_features_idx[idx_val][0]]
                         X_cnn[idx_ii] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=self.cnn_features_idx[idx_val][1])
                     cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
-                    outputs = model(cnn_inputs, ff_inputs, model.z0)
+
+                    outputs = model(cnn_inputs, ff_inputs, opt_weights)
                 else:
-                    outputs = model(ff_inputs, model.z0)
+                    outputs = model(ff_inputs, opt_weights)
 
                 loss = training_loss(outputs, labels).float().to(device=self.device)
                 class_guesses = torch.argmax(outputs,1)
@@ -226,6 +229,7 @@ class CoCo_FF(Solver):
                     labels = Variable(torch.from_numpy(Y[test_inds])).long().to(device=self.device)
 
                     # forward + backward + optimize
+                    opt_weights = [zz.clone().reshape(1, *zz.shape).expand(TEST_BATCH_SIZE, *zz.shape) for zz in self.model.z0]
                     if type(model) is CNNet:
                         X_cnn = np.zeros((len(test_inds), 3,self.problem.H,self.problem.W))
                         for idx_ii, idx_val in enumerate(test_inds):
@@ -234,9 +238,9 @@ class CoCo_FF(Solver):
                                 prob_params[k] = params[k][self.cnn_features_idx[idx_val][0]]
                             X_cnn[idx_ii] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=self.cnn_features_idx[idx_val][1])
                         cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
-                        outputs = model(cnn_inputs, ff_inputs, model.z0)
+                        outputs = model(cnn_inputs, ff_inputs, opt_weights)
                     else:
-                        outputs = model(ff_inputs, model.z0)
+                        outputs = model(ff_inputs, opt_weights)
 
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
@@ -260,7 +264,6 @@ class CoCo_FF(Solver):
         print('Done training')
 
     def forward(self, prob_params, solver=cp.MOSEK, max_evals=16):
-        self.model.to(device=torch.device('cpu'))
         y_guesses = np.zeros((self.n_evals**self.problem.n_obs, self.n_y), dtype=int)
 
         # Compute forward pass for each obstacle and save the top
@@ -277,14 +280,16 @@ class CoCo_FF(Solver):
             cnn_inpt = torch.from_numpy(cnn_features).float()
 
             t0 = time.time()
+
+            opt_weights = [zz.clone().reshape(1, *zz.shape).expand(self.problem.n_obs, *zz.shape) for zz in self.model.z0]
             with torch.no_grad():
-                scores = self.model(cnn_inpt, inpt, self.model.z0).cpu().detach().numpy()[:]
+                scores = self.model(cnn_inpt, inpt, opt_weights).cpu().detach().numpy()[:]
         else:
             features = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs)
             inpt = Variable(torch.from_numpy(features)).unsqueeze(0).float()
             t0 = time.time()
             with torch.no_grad():
-                scores = self.model(inpt, self.model.z0).cpu().detach().numpy()[:].squeeze(0)
+                scores = self.model(inpt, opt_weights).cpu().detach().numpy()[:].squeeze(0)
         torch.cuda.synchronize()
         total_time += (time.time()-t0)
 

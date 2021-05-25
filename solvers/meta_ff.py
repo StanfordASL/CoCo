@@ -1,5 +1,6 @@
 import time
 import random
+import collections
 import sys
 import itertools
 import pickle, os
@@ -29,7 +30,7 @@ class Meta_FF(CoCo_FF):
     """
     Constructor for meta-learning variant of CoCo_FF
     """
-    def __init__(self, system, problem, prob_features, n_evals=2):
+    def __init__(self, system, problem, prob_features, n_evals=2, learn_lr=True):
         super().__init__(system, problem, prob_features)
 
         self.training_params['TRAINING_ITERATIONS'] = int(250)
@@ -38,10 +39,13 @@ class Meta_FF(CoCo_FF):
         self.training_params['CHECKPOINT_AFTER'] = int(50)
         self.training_params['SAVEPOINT_AFTER'] = int(100)
 
-        self.update_lr = 1e-5
+        self.update_lr_sqrt = Variable(1e-2*torch.ones([1]), requires_grad=learn_lr)
         self.meta_lr = 3e-4
         self.update_step = 5
         self.margin = 10.
+
+        self.accuracy_thresh = 0.4
+        self.buffer_len = 10
 
     def construct_strategies(self, n_features, train_data, device_id=0):
         super().construct_strategies(n_features, train_data)
@@ -66,10 +70,14 @@ class Meta_FF(CoCo_FF):
                 w_.data.copy_(w)
             self.feas_last_layer.append(w_)
 
+    def save_network(self):
+        torch.save(self.model.z0, self.model_fn)
+        torch.save(self.feas_last_layer, self.feas_fn)
+
     def load_network(self, coco_model_fn, override_model_fn, feas_model_fn=""):
         if os.path.exists(coco_model_fn):
             print('Loading presaved classifier model from {}'.format(coco_model_fn))
-            saved_params = list(torch.load(coco_model_fn).values())
+            saved_params = list(torch.load(coco_model_fn))
             for ii in range(len(saved_params)-2):
                 self.shared_params[ii].data.copy_(saved_params[ii])
             self.coco_last_layer[-2].data.copy_(saved_params[-2])
@@ -86,32 +94,6 @@ class Meta_FF(CoCo_FF):
         else:
             for ii in range(len(self.coco_last_layer)):
                 self.feas_last_layer[ii].data.copy_(self.coco_last_layer[ii])
-
-    def copy_shared_params(self, target, source):
-        """
-        Copies all network weights from source NN to target NN
-        except for the last layer
-        """
-        target_weights = list(target.parameters())
-        source_weights = list(source.parameters())
-        for ii in range(len(source_weights)-2):
-            target_weights[ii].data.copy_(source_weights[ii].detach())
-
-    def copy_all_but_last(self, target, source_data):
-        """
-        Updates target NN parameters using list of weights in source_data except for last layer
-        """
-        target_weights = list(target.parameters())
-        for ii in range(len(source_data)-2):
-            target_weights[ii].data.copy_(source_data[ii].data)
-
-    def copy_last(self, target, source_data):
-        """
-        Updates last layer NN parameters in target last layer weights in source_data
-        """
-        target_weights = list(target.parameters())
-        target_weights[-2].data.copy_(source_data[-2].data)
-        target_weights[-1].data.copy_(source_data[-1].data)
 
     def prior(self, batch_size):
         """
@@ -132,8 +114,15 @@ class Meta_FF(CoCo_FF):
         params = train_data[0]
 
         training_loss = torch.nn.CrossEntropyLoss()
-        all_params = self.shared_params + self.coco_last_layer + self.feas_last_layer
+
+        # Hacky way to move lr to GPU and keep it in graph
+        self.update_lr_sqrt = self.update_lr_sqrt.to(device=self.device).detach().requires_grad_(True)
+
+        all_params = self.shared_params + self.coco_last_layer + self.feas_last_layer + [self.update_lr_sqrt]
         meta_opt = torch.optim.Adam(all_params, lr=self.meta_lr, weight_decay=self.weight_decay)
+
+        # Circular buffer to track running accuracy of classifier
+        accuracies = collections.deque(maxlen=self.buffer_len)
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
@@ -167,7 +156,6 @@ class Meta_FF(CoCo_FF):
 
                     prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
 
-                    # ff_inputs_inner[prb_idx_range] = torch.from_numpy(self.features[self.problem.n_obs*idx_val:self.problem.n_obs*(idx_val+1), :]).float().to(device=self.device)
                     feature_vec = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
                     ff_inputs_inner[prb_idx_range] = feature_vec.repeat(self.problem.n_obs,1).float().to(device=self.device)
 
@@ -179,6 +167,10 @@ class Meta_FF(CoCo_FF):
                     cnn_inputs_inner[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
 
                 for ii_step in range(self.update_step):
+                    # Skip inner loop if inaccurate
+                    if len(accuracies) < self.buffer_len or np.mean(accuracies) < self.accuracy_thresh:
+                        continue
+
                     # Use strategy classifier to identify high ranking strategies for each feature
                     feas_scores = model(cnn_inputs_inner, ff_inputs_inner, fast_weights)
 
@@ -199,7 +191,7 @@ class Meta_FF(CoCo_FF):
                             y_guesses[prb_idx, 4*cl_ii:4*(cl_ii+1)] = np.reshape(y_obs, (4, self.problem.N-1))
 
                     # TODO(acauligi): use multiprocessing to parallelize this
-                    prob_success_dict = np.ones(len(idx))
+                    prob_success_flags = np.ones(len(idx))
                     for prb_idx, idx_val in enumerate(idx):
                         prob_success = False
                         try:
@@ -209,10 +201,10 @@ class Meta_FF(CoCo_FF):
                                 prob_success, _, _, optvals = self.problem.solve_pinned(prob_params_list[prb_idx], y_guesses[prb_idx], solver=cp.GUROBI)
                         except:
                             prob_success = False
-                        prob_success_dict[prb_idx] = 1. if prob_success else -1.
+                        prob_success_flags[prb_idx] = 1. if prob_success else -1.
 
                         # For successful optimization problems, propagate the initial state of robot forward when applicable
-                        if prob_success_dict[prb_idx] == 1.:
+                        if prob_success_flags[prb_idx] == 1.:
                             prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
 
                             feature_vec = ff_inputs_inner[self.problem.n_obs*prb_idx].detach().cpu().numpy()
@@ -221,7 +213,7 @@ class Meta_FF(CoCo_FF):
                             ff_inner = torch.from_numpy(self.problem.propagate_features(feature_vec, u0, self.prob_features))
                             ff_inputs_inner[prb_idx_range] = ff_inner.repeat(self.problem.n_obs,1).float().to(device=self.device)
 
-                    prob_success_dict = torch.from_numpy(prob_success_dict).to(device=self.device)
+                    prob_success_flags = torch.from_numpy(prob_success_flags).to(device=self.device)
 
                     # Compute hinge loss using class score from each applied strategy
                     inner_loss = torch.zeros(len(idx)).to(device=self.device)
@@ -236,11 +228,11 @@ class Meta_FF(CoCo_FF):
 
                     # If problem feasible, push scores to positive value
                     # If problem infeasible, push scores to negative value
-                    inner_loss = torch.mean(torch.relu(self.margin - prob_success_dict * inner_loss))
+                    inner_loss = torch.mean(torch.relu(self.margin - prob_success_flags * inner_loss))
 
                     # Descent step on feas_model network weights
                     grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
-                    fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
+                    fast_weights = list(map(lambda p: p[1] - torch.square(self.update_lr_sqrt) * p[0], zip(grad, fast_weights)))
 
                 # Construct features for meta training loss
                 ff_inputs = np.zeros((self.problem.n_obs*len(idx), self.features.shape[1]))
@@ -274,7 +266,9 @@ class Meta_FF(CoCo_FF):
                 running_loss += loss.item()
 
                 class_guesses = torch.argmax(outputs,1)
-                accuracy = torch.mean(torch.eq(class_guesses,labels).float())
+                accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
+                accuracies.append(accuracy)
+
                 loss.backward()
                 meta_opt.step()
 
@@ -309,7 +303,7 @@ class Meta_FF(CoCo_FF):
 
                     loss = training_loss(outputs, labels).float().to(device=self.device)
                     class_guesses = torch.argmax(outputs,1)
-                    accuracy = torch.mean(torch.eq(class_guesses,labels).float())
+                    accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
 
                     writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
                     writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
@@ -317,14 +311,14 @@ class Meta_FF(CoCo_FF):
                     running_loss = 0.
 
                 if itr % self.training_params['SAVEPOINT_AFTER'] == 0:
-                    torch.save(model.state_dict(), self.model_fn)
-                    torch.save(self.feas_last_layer, self.feas_fn)
+                    self.save_network()
                 torch.save(self.feas_last_layer, self.feas_fn)
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
-        torch.save(model.state_dict(), self.model_fn)
-        torch.save(self.feas_last_layer, self.feas_fn)
+        self.save_network()
+        verbose and print('Saved model at {}'.format(self.model_fn))
+        verbose and print('Saved feas model at {}'.format(self.feas_fn))
 
     def forward(self, prob_params, solver=cp.MOSEK, max_evals=1):
         model = self.model
@@ -384,7 +378,7 @@ class Meta_FF(CoCo_FF):
 
         prob_success, cost, n_evals, optvals = False, np.Inf, 0, None
 
-        prob_success_dict = {}
+        prob_success_flags = {}
         for ii, str_tuple in enumerate(strategy_tuples):
             y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
             for ii_obs in range(self.problem.n_obs):
@@ -396,33 +390,30 @@ class Meta_FF(CoCo_FF):
 
             for ii_obs in range(self.problem.n_obs):
               idx_ii = ind_max[ii_obs, str_tuple[ii_obs]]
-              if (idx_ii, ii_obs) in prob_success_dict.keys():
+              if (idx_ii, ii_obs) in prob_success_flags.keys():
                   # Only override
-                  if prob_success_dict[(idx_ii, ii_obs)] < 0.:
-                      prob_success_dict[(idx_ii, ii_obs)] = 1. if prob_success else -1.
+                  if prob_success_flags[(idx_ii, ii_obs)] < 0.:
+                      prob_success_flags[(idx_ii, ii_obs)] = 1. if prob_success else -1.
               else:
-                  prob_success_dict[(idx_ii, ii_obs)] = 1. if prob_success else -1.
+                  prob_success_flags[(idx_ii, ii_obs)] = 1. if prob_success else -1.
 
               if prob_success:
                   solve_time = time.time()-t0 + total_time
                   break
 
-        feas_losses = torch.zeros(len(prob_success_dict.keys()))
-        ctr = 0
-        for kk, prob_success_bin in prob_success_dict.items():
+        feas_losses = []
+        for kk, prob_success_flag in prob_success_flags.items():
             idx_ii, ii_obs = kk
-            feas_loss = feas_scores[ii_obs, idx_ii]
 
             # If problem feasible, push scores to positive value
             # If problem infeasible, push scores to negative value
-            feas_losses[ctr] = torch.relu(self.margin - prob_success_bin*feas_loss)
-            ctr += 1
-        inner_loss = torch.mean(feas_losses)
+            feas_loss = feas_scores[ii_obs, idx_ii]
+            feas_loss = torch.relu(self.margin - prob_success_flag*feas_loss)
+            feas_losses.append(feas_loss)
 
         # Descent step on feas_model network weights
-        inner_loss = torch.mean(inner_loss)
+        inner_loss = torch.mean(torch.stack(feas_losses))
         grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
-
-        fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
+        fast_weights = list(map(lambda p: p[1] - torch.square(self.update_lr_sqrt) * p[0], zip(grad, fast_weights)))
 
         return prob_success, cost, n_evals, optvals
