@@ -11,6 +11,7 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.utils.tensorboard import SummaryWriter
 from torch.nn import Sigmoid
 from datetime import datetime
 
@@ -121,7 +122,7 @@ class CoCo(Solver):
                 self.model.z0[ii].data.copy_(saved_params[ii])
             self.model_fn = fn_classifier_model
 
-    def train(self, verbose=True):
+    def train(self, summary_writer_fn, verbose=True):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -131,12 +132,13 @@ class CoCo(Solver):
         TEST_BATCH_SIZE = self.training_params['TEST_BATCH_SIZE']
 
         model = self.model
+        writer = SummaryWriter("{}".format(summary_writer_fn))
 
         X = self.features[:self.num_train]
         Y = self.labels[:self.num_train,0]
 
         training_loss = torch.nn.CrossEntropyLoss()
-        opt = optim.Adam(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        opt = optim.Adam(model.z0, lr=self.lr, weight_decay=self.weight_decay)
 
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
@@ -179,6 +181,10 @@ class CoCo(Solver):
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                     verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
+
+                    writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/accuracy', accuracy.item(), itr)
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.z0, self.model_fn)
