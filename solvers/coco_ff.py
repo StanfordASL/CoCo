@@ -66,17 +66,8 @@ class CoCo_FF(Solver):
         for k in p_train.keys():
             self.num_train = len(p_train[k])
 
-        ## TODO(acauligi): add support for combining p_train & p_test correctly
-        ## to be able to generate strategies for train and test params here
-        # p_test = None
-        # x_test = None
-        # y_test = np.empty((*y_train.shape[:-1], 0))   # Assumes y_train is 3D tensor
-        # if test_data:
-        #   p_test, y_test = test_data[:2]
-        #   for k in p_test.keys():
-        #     self.num_test = len(p_test[k])
-        # num_probs = self.num_train + self.num_test
-        # self.Y = np.dstack((Y_train, Y_test))         # Stack Y_train and Y_test along dim=2
+        T = int(x_train.shape[1] / (2*self.problem.n))
+
         num_probs = self.num_train
         params = p_train
         self.Y = y_train
@@ -92,26 +83,28 @@ class CoCo_FF(Solver):
         self.n_strategies = 0
 
         for ii in range(num_probs):
-            obs_strats = self.problem.which_M(x_train[ii], obs_train[ii])
+            for jj in range(T):
+                x_sol = x_train[ii, 2*self.problem.n*jj:2*self.problem.n*(jj+1), :]
+                obs_strats = self.problem.which_M(x_sol, obs_train[ii])
 
-            prob_params = {}
-            for k in params:
-                prob_params[k] = params[k][ii]
+                prob_params = {}
+                for k in params:
+                    prob_params[k] = params[k][ii]
 
-            for ii_obs in range(self.problem.n_obs):
-                # TODO(acauligi): check if transpose necessary with new pickle save format for Y
-                y_true = np.reshape(self.Y[ii, 4*ii_obs:4*(ii_obs+1),:], (self.n_y))
-                obs_strat = tuple(obs_strats[ii_obs])
+                for ii_obs in range(self.problem.n_obs):
+                    # TODO(acauligi): check if transpose necessary with new pickle save format for Y
+                    y_true = np.reshape(self.Y[ii, 4*ii_obs:4*(ii_obs+1),:], (self.n_y))
+                    obs_strat = tuple(obs_strats[ii_obs])
 
-                if obs_strat not in self.strategy_dict.keys():
-                    self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, np.copy(y_true)))
-                    self.n_strategies += 1
+                    if obs_strat not in self.strategy_dict.keys():
+                        self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, np.copy(y_true)))
+                        self.n_strategies += 1
 
-                self.labels[ii*self.problem.n_obs+ii_obs] = self.strategy_dict[obs_strat]
+                    self.labels[ii*self.problem.n_obs+ii_obs] = self.strategy_dict[obs_strat]
 
-                self.features[ii*self.problem.n_obs+ii_obs] = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs if 'obstacles' in self.prob_features else None)
-                if "obstacles_map" in self.prob_features:
-                    self.cnn_features_idx[ii*self.problem.n_obs+ii_obs] = np.array([ii,ii_obs], dtype=int)
+                    self.features[ii*self.problem.n_obs+ii_obs] = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs if 'obstacles' in self.prob_features else None)
+                    if "obstacles_map" in self.prob_features:
+                        self.cnn_features_idx[ii*self.problem.n_obs+ii_obs] = np.array([ii,ii_obs], dtype=int)
 
     def setup_network(self, depth=3, neurons=128, device_id=0):
         if device_id == -1:
