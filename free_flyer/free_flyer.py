@@ -166,7 +166,9 @@ class FreeFlyer(Problem):
             
         # Control constraints
         for kk in range(self.N-1):
-          cons += [cp.norm(u[:,kk]) <= self.umax]
+            for jj in range(self.m):
+                cons += [self.umin - u[jj,kk] <= 0]
+                cons += [u[jj,kk] - self.umax <= 0]
 
         M = 1000. # big M value
         lqr_cost = 0.
