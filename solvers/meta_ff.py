@@ -1,3 +1,4 @@
+import pdb
 import time
 import random
 import collections
@@ -39,17 +40,70 @@ class Meta_FF(CoCo_FF):
         self.training_params['CHECKPOINT_AFTER'] = int(50)
         self.training_params['SAVEPOINT_AFTER'] = int(100)
 
+        # Track sqrt of inner adaptation lr to ensure non-negativity
         self.update_lr_sqrt = Variable(1e-2*torch.ones([1]), requires_grad=learn_lr)
         self.meta_lr = 3e-4
-        self.update_step = 5
+
+        # Number of inner loop adaption steps; set to the MPC horizon once dataset is provided
+        self.update_step = None
+
+        # Margin for feasibility SVM classifier
         self.margin = 10.
 
-        self.accuracy_thresh = 0.4
-        self.buffer_len = 10
+        self.accuracy_thresh = 0.4    # Inner loop adaptation steps only taken after accuracy crosses this threshold during training
+        self.buffer_len = 10          # Circular buffer length used to compute classifier accuracy during training
 
     def construct_strategies(self, n_features, train_data, device_id=0):
-        super().construct_strategies(n_features, train_data)
+        self.n_features = n_features
+        self.strategy_dict = {}
+
+        p_train = train_data[0]
+        obs_train = p_train['obstacles']
+        x_train = train_data[1]
+        self.Y = train_data[-3]
+        params = p_train
+
+        self.num_train = x_train.shape[0]
+
+        self.T_mpc = int(x_train.shape[1] / (2*self.problem.n))
+
+        self.n_y = int(self.Y[0].size / self.T_mpc / self.problem.n_obs)
+        self.y_shape = self.Y[0].shape
+        self.features = np.zeros((self.problem.n_obs*self.num_train*self.T_mpc, self.n_features))
+        self.cnn_features = None
+        self.cnn_features_idx = None
+        if "obstacles_map" in self.prob_features:
+            self.cnn_features_idx = np.zeros((self.problem.n_obs*self.num_train*self.T_mpc, 3), dtype=int)
+        self.labels = np.zeros((self.num_train*self.T_mpc*self.problem.n_obs, 1+self.n_y), dtype=int)
+        self.n_strategies = 0
+
+        for ii in range(self.num_train):
+            for jj in range(self.T_mpc):
+                x_sol = x_train[ii, 2*self.problem.n*jj:2*self.problem.n*(jj + 1), :]
+                obs_strats = self.problem.which_M(x_sol, obs_train[ii])
+
+                prob_params = {}
+                for k in params:
+                    prob_params[k] = params[k][ii]
+
+                for ii_obs in range(self.problem.n_obs):
+                    # TODO(acauligi): check if transpose necessary with new pickle save format for Y
+                    y_true = np.reshape(self.Y[ii, 4*ii_obs:4*(ii_obs + 1),:], (self.n_y))
+                    obs_strat = tuple(obs_strats[ii_obs])
+
+                    if obs_strat not in self.strategy_dict.keys():
+                        self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, np.copy(y_true)))
+                        self.n_strategies += 1
+
+                    self.labels[ii*self.problem.n_obs*self.T_mpc + jj*self.problem.n_obs + ii_obs] = self.strategy_dict[obs_strat]
+
+                    self.features[ii*self.problem.n_obs + jj*self.T_mpc + ii_obs] = self.problem.construct_features(prob_params, self.prob_features, ii_obs=ii_obs if 'obstacles' in self.prob_features else None)
+                    if "obstacles_map" in self.prob_features:
+                        self.cnn_features_idx[ii*self.problem.n_obs + jj*self.T_mpc + ii_obs] = np.array([ii, jj, ii_obs], dtype=int)
+
         super().setup_network(device_id=device_id)
+
+        self.update_step = self.T_mpc
 
         # file names for PyTorch models
         now = datetime.now().strftime('%Y%m%d_%H%M')
@@ -127,14 +181,13 @@ class Meta_FF(CoCo_FF):
         itr = 1
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
             t0 = time.time()
-            running_loss = 0.0
 
             # Sample all data points
             rand_idx = list(np.arange(0, self.num_train-1))
             random.shuffle(rand_idx)
             indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
 
-            for ii,idx in enumerate(indices):
+            for ii, idx in enumerate(indices):
                 meta_opt.zero_grad() # zero the parameter gradients
 
                 # fast_weights are network weights for feas_model with descent steps taken
@@ -166,7 +219,30 @@ class Meta_FF(CoCo_FF):
                                         ii_obs=ii_obs)
                     cnn_inputs_inner[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
 
+                loss = torch.zeros([self.update_step], requires_grad=True).to(device=self.device)
                 for ii_step in range(self.update_step):
+                    # Pass inner loop weights to CoCo classifier (except last layer)
+                    outer_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.coco_last_layer]
+
+                    outer_weights = fast_weights[:-2] + outer_weights
+                    outputs = model(cnn_inputs_inner, ff_inputs_inner, outer_weights)
+
+                    labels = np.zeros(batch_size)
+                    for prb_idx, idx_val in enumerate(idx):
+                        prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
+                        label_idx_range = range(idx_val*self.problem.n_obs*self.T_mpc, idx_val*self.problem.n_obs*self.T_mpc + self.problem.n_obs)
+                        labels[prb_idx_range] = self.labels[label_idx_range, 0]
+                    labels = torch.from_numpy(labels).long().to(device=self.device)
+
+                    class_guesses = torch.argmax(outputs,1)
+                    accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
+                    accuracies.append(accuracy)
+
+                    try:
+                        loss[ii_step] = training_loss(outputs, labels).float().to(device=self.device).item()
+                    except:
+                        pdb.set_trace()
+
                     # Skip inner loop if inaccurate
                     if len(accuracies) < self.buffer_len or np.mean(accuracies) < self.accuracy_thresh:
                         continue
@@ -216,7 +292,7 @@ class Meta_FF(CoCo_FF):
                     prob_success_flags = torch.from_numpy(prob_success_flags).to(device=self.device)
 
                     # Compute hinge loss using class score from each applied strategy
-                    inner_loss = torch.zeros(len(idx)).to(device=self.device)
+                    inner_loss = torch.zeros(len(idx), requires_grad=True).to(device=self.device)
                     for prb_idx, idx_val in enumerate(idx):
                         prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
                         feas_scores_prb = feas_scores[prb_idx_range]
@@ -234,41 +310,7 @@ class Meta_FF(CoCo_FF):
                     grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
                     fast_weights = list(map(lambda p: p[1] - torch.square(self.update_lr_sqrt) * p[0], zip(grad, fast_weights)))
 
-                # Construct features for meta training loss
-                ff_inputs = np.zeros((self.problem.n_obs*len(idx), self.features.shape[1]))
-                cnn_inputs = np.zeros((self.problem.n_obs*len(idx), 3,self.problem.H,self.problem.W))
-                labels = np.zeros((self.problem.n_obs*len(idx)))
-                for prb_idx, idx_val in enumerate(idx):
-                    prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
-
-                    prob_params = {}
-                    for k in params:
-                        prob_params[k] = params[k][idx_val]
-                    prob_params_list.append(prob_params)
-
-                    ff_inputs[prb_idx_range] = self.features[self.problem.n_obs*idx_val:self.problem.n_obs*(idx_val+1), :]
-                    for ii_obs in range(self.problem.n_obs):
-                        cnn_inputs[self.problem.n_obs*prb_idx+ii_obs] = self.problem.construct_cnn_features(prob_params, \
-                                        self.prob_features, \
-                                        ii_obs=ii_obs)
-                    labels[prb_idx_range] = self.labels[self.problem.n_obs*idx_val:self.problem.n_obs*(idx_val+1), 0]
-                ff_inputs = torch.from_numpy(ff_inputs).float().to(device=self.device)
-                cnn_inputs = torch.from_numpy(cnn_inputs).float().to(device=self.device)
-                labels = torch.from_numpy(labels).long().to(device=self.device)
-
-                # Pass inner loop weights to CoCo classifier (except last layer)
-                outer_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.coco_last_layer]
-
-                outer_weights = fast_weights[:-2] + outer_weights
-                outputs = model(cnn_inputs, ff_inputs, outer_weights)
-
-                loss = training_loss(outputs, labels).float().to(device=self.device)
-                running_loss += loss.item()
-
-                class_guesses = torch.argmax(outputs,1)
-                accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
-                accuracies.append(accuracy)
-
+                loss = torch.mean(loss)
                 loss.backward()
                 meta_opt.step()
 
@@ -305,10 +347,8 @@ class Meta_FF(CoCo_FF):
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
 
-                    writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
                     writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
                     writer.add_scalar('Loss/accuracy', accuracy.item(), itr)
-                    running_loss = 0.
 
                 if itr % self.training_params['SAVEPOINT_AFTER'] == 0:
                     self.save_network()

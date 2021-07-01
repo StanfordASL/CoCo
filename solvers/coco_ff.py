@@ -159,7 +159,7 @@ class CoCo_FF(Solver):
         model.to(device=self.device)
         writer = SummaryWriter("{}".format(summary_writer_fn))
 
-        X = self.features[:self.problem.n_obs*self.num_train]
+        X = self.features
         X_cnn = None
         if 'obstacles_map' in self.prob_features:
             # X_cnn = self.cnn_features[:self.problem.n_obs*self.num_train]
@@ -175,7 +175,7 @@ class CoCo_FF(Solver):
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
             t0 = time.time()
             running_loss = 0.0
-            rand_idx = list(np.arange(0,X.shape[0]-1))
+            rand_idx = list(np.arange(0, X.shape[0]-1))
             random.shuffle(rand_idx)
 
             # Sample all data points
