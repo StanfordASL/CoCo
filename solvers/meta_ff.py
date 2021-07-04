@@ -196,7 +196,7 @@ class Meta_FF(CoCo_FF):
                 fast_weights = self.shared_params + self.feas_last_layer
                 fast_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size*self.T_mpc, *zz.shape) for zz in fast_weights]
 
-                # Note each problem itself has self.problem.n_obs task features
+                # Set up the features and labels associated with parameters associated with each trajectory in batch
                 ff_inputs_inner = torch.zeros((batch_size*self.T_mpc, self.n_features)).to(device=self.device)
                 cnn_inputs_inner = torch.zeros((batch_size*self.T_mpc, 3, self.problem.H, self.problem.W)).to(device=self.device)
                 prob_params_list = []
@@ -229,16 +229,13 @@ class Meta_FF(CoCo_FF):
 
                 loss = torch.zeros([self.update_step], requires_grad=True).to(device=self.device)
                 for ii_step in range(self.update_step):
-                    # Pass inner loop weights to CoCo classifier (except last layer)
-                    outer_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size*self.T_mpc, *zz.shape) for zz in self.coco_last_layer]
-
-                    outer_weights = fast_weights[:-2] + outer_weights
-                    outputs = model(cnn_inputs_inner, ff_inputs_inner, outer_weights)
-
+                    # Compute standard CoCo classification loss over full trajectory using current set of weights
+                    coco_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size*self.T_mpc, *zz.shape) for zz in self.coco_last_layer]
+                    coco_weights = fast_weights[:-2] + coco_weights
+                    outputs = model(cnn_inputs_inner, ff_inputs_inner, coco_weights)
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
                     accuracies.append(accuracy)
-
                     loss[ii_step] = training_loss(outputs, labels).float().to(device=self.device).item()
 
                     # Skip inner loop if inaccurate
@@ -248,7 +245,7 @@ class Meta_FF(CoCo_FF):
                     # Use strategy classifier to identify high ranking strategies for each feature
                     feas_scores = model(cnn_inputs_inner, ff_inputs_inner, fast_weights)
 
-                    opt_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.shared_params+self.coco_last_layer]
+                    opt_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size*self.T_mpc, *zz.shape) for zz in self.shared_params+self.coco_last_layer]
                     class_scores = model(cnn_inputs_inner, ff_inputs_inner, opt_weights)
 
                     # Predicted strategy index for each features
@@ -308,7 +305,7 @@ class Meta_FF(CoCo_FF):
                     grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
                     fast_weights = list(map(lambda p: p[1] - torch.square(self.update_lr_sqrt) * p[0], zip(grad, fast_weights)))
 
-                loss = torch.mean(loss)
+                loss = torch.sum(loss)
                 loss.backward()
                 meta_opt.step()
 
