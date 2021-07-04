@@ -57,22 +57,13 @@ class CoCo(Solver):
         """
         self.n_features = n_features
         self.strategy_dict = {}
+        self.binary_dict = {}
 
         p_train = train_data[0]
         y_train = train_data[-3]
         for k in p_train.keys():
             self.num_train = len(p_train[k])
 
-        ## TODO(acauligi): add support for combining p_train & p_test correctly
-        ## to be able to generate strategies for train and test params here
-        # p_test = None
-        # y_test = np.empty((*y_train.shape[:-1], 0))   # Assumes y_train is 3D tensor
-        # if test_data:
-        #   p_test, y_test = test_data[:2]
-        #   for k in p_test.keys():
-        #     self.num_test = len(p_test[k])
-        # num_probs = self.num_train + self.num_test
-        # self.Y = np.dstack((Y_train, Y_test))         # Stack Y_train and Y_test along dim=2
         num_probs = self.num_train
         params = p_train
         self.Y = y_train
@@ -88,7 +79,8 @@ class CoCo(Solver):
             y_true = np.reshape(self.Y[ii,:,:], (self.n_y))
 
             if tuple(y_true) not in self.strategy_dict.keys():
-                self.strategy_dict[tuple(y_true)] = np.hstack((self.n_strategies,np.copy(y_true)))
+                self.strategy_dict[tuple(y_true)] = np.hstack((self.n_strategies, y_true))
+                self.binary_dict[self.n_strategies] = y_true
                 self.n_strategies += 1
             self.labels[ii] = self.strategy_dict[tuple(y_true)]
 
@@ -210,22 +202,9 @@ class CoCo(Solver):
 
         y_guesses = np.zeros((self.n_evals, self.n_y), dtype=int)
 
-        num_probs = self.num_train
-        for ii,idx in enumerate(ind_max):
-            for jj in range(num_probs):
-                # first index of training label is that strategy's idx
-                label = self.labels[jj]
-                if label[0] == idx:
-                    # remainder of training label is that strategy's binary pin
-                    y_guesses[ii] = label[1:]
-                    break
-
         prob_success, cost, n_evals, optvals = False, np.Inf, len(y_guesses), None
-        for ii,idx in enumerate(ind_max):
-            y_guess = y_guesses[ii]
-
-            # weirdly need to reshape in reverse order of cvxpy variable shape
-            y_guess = np.reshape(y_guess, self.y_shape)
+        for ii, idx in enumerate(ind_max):
+            y_guess = np.reshape(self.binary_dict[idx], self.y_shape)
 
             prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver)
 
