@@ -80,11 +80,11 @@ class Meta_FF(CoCo_FF):
         for ii in range(self.num_train):
             for jj in range(self.T_mpc):
                 x_sol = x_train[ii, 2*self.problem.n*jj:2*self.problem.n*(jj + 1), :]
-                obs_strats = self.problem.which_M(x_sol, obs_train[ii])
+                obs_strats = self.problem.which_M(x_sol, obs_train[ii, jj])
 
                 prob_params = {}
                 for k in params:
-                    prob_params[k] = params[k][ii]
+                    prob_params[k] = params[k][ii, jj]
 
                 for ii_obs in range(self.problem.n_obs):
                     # TODO(acauligi): check if transpose necessary with new pickle save format for Y
@@ -190,58 +190,56 @@ class Meta_FF(CoCo_FF):
             for ii, idx in enumerate(indices):
                 meta_opt.zero_grad() # zero the parameter gradients
 
+                batch_size = len(idx)*self.problem.n_obs
+
                 # fast_weights are network weights for feas_model with descent steps taken
                 fast_weights = self.shared_params + self.feas_last_layer
-
-                # Expand task params to batch size
-                batch_size = len(idx)*self.problem.n_obs
-                fast_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in fast_weights]
+                fast_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size*self.T_mpc, *zz.shape) for zz in fast_weights]
 
                 # Note each problem itself has self.problem.n_obs task features
-                ff_inputs_inner = torch.zeros((len(idx)*self.problem.n_obs, self.n_features)).to(device=self.device)
-                cnn_inputs_inner = torch.zeros((len(idx)*self.problem.n_obs, 3, self.problem.H, self.problem.W)).to(device=self.device)
+                ff_inputs_inner = torch.zeros((batch_size*self.T_mpc, self.n_features)).to(device=self.device)
+                cnn_inputs_inner = torch.zeros((batch_size*self.T_mpc, 3, self.problem.H, self.problem.W)).to(device=self.device)
                 prob_params_list = []
                 for prb_idx, idx_val in enumerate(idx):
-                    prob_params = {}
-                    for k in params:
-                        prob_params[k] = params[k][idx_val]
-                    prob_params_list.append(prob_params)
+                    for i_t in range(self.T_mpc):
+                        prob_params = {}
+                        for k in params:
+                            prob_params[k] = params[k][idx_val, i_t]
+                        prob_params_list.append(prob_params)
 
-                    prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
+                        prb_idx_range = range(self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*i_t, self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*(i_t+1))
 
-                    feature_vec = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
-                    ff_inputs_inner[prb_idx_range] = feature_vec.repeat(self.problem.n_obs,1).float().to(device=self.device)
+                        feature_vec = torch.from_numpy(self.problem.construct_features(prob_params, self.prob_features))
+                        ff_inputs_inner[prb_idx_range] = feature_vec.repeat(self.problem.n_obs, 1).float().to(device=self.device)
 
-                    X_cnn_inner = np.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W))
-                    for ii_obs in range(self.problem.n_obs):
-                        X_cnn_inner[ii_obs] = self.problem.construct_cnn_features(prob_params, \
-                                        self.prob_features, \
-                                        ii_obs=ii_obs)
-                    cnn_inputs_inner[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
+                        X_cnn_inner = np.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W))
+                        for ii_obs in range(self.problem.n_obs):
+                            X_cnn_inner[ii_obs] = self.problem.construct_cnn_features(prob_params, \
+                                            self.prob_features, \
+                                            ii_obs=ii_obs)
+                        cnn_inputs_inner[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
+
+                labels = np.zeros(batch_size*self.T_mpc)
+                for prb_idx, idx_val in enumerate(idx):
+                    label_idx_range = range(idx_val*self.problem.n_obs*self.T_mpc, idx_val*self.problem.n_obs*self.T_mpc + self.problem.n_obs)
+                    for i_t in range(self.T_mpc):
+                        prb_idx_range = range(self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*i_t, self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*(i_t+1))
+                        labels[prb_idx_range] = self.labels[label_idx_range, 0]
+                labels = torch.from_numpy(labels).long().to(device=self.device)
 
                 loss = torch.zeros([self.update_step], requires_grad=True).to(device=self.device)
                 for ii_step in range(self.update_step):
                     # Pass inner loop weights to CoCo classifier (except last layer)
-                    outer_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size, *zz.shape) for zz in self.coco_last_layer]
+                    outer_weights = [zz.clone().reshape(1, *zz.shape).expand(batch_size*self.T_mpc, *zz.shape) for zz in self.coco_last_layer]
 
                     outer_weights = fast_weights[:-2] + outer_weights
                     outputs = model(cnn_inputs_inner, ff_inputs_inner, outer_weights)
-
-                    labels = np.zeros(batch_size)
-                    for prb_idx, idx_val in enumerate(idx):
-                        prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
-                        label_idx_range = range(idx_val*self.problem.n_obs*self.T_mpc, idx_val*self.problem.n_obs*self.T_mpc + self.problem.n_obs)
-                        labels[prb_idx_range] = self.labels[label_idx_range, 0]
-                    labels = torch.from_numpy(labels).long().to(device=self.device)
 
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
                     accuracies.append(accuracy)
 
-                    try:
-                        loss[ii_step] = training_loss(outputs, labels).float().to(device=self.device).item()
-                    except:
-                        pdb.set_trace()
+                    loss[ii_step] = training_loss(outputs, labels).float().to(device=self.device).item()
 
                     # Skip inner loop if inaccurate
                     if len(accuracies) < self.buffer_len or np.mean(accuracies) < self.accuracy_thresh:
@@ -294,7 +292,7 @@ class Meta_FF(CoCo_FF):
                     # Compute hinge loss using class score from each applied strategy
                     inner_loss = torch.zeros(len(idx), requires_grad=True).to(device=self.device)
                     for prb_idx, idx_val in enumerate(idx):
-                        prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
+                        prb_idx_range = range(self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*ii_step, self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*(ii_step+1))
                         feas_scores_prb = feas_scores[prb_idx_range]
 
                         feas_loss = torch.zeros(self.problem.n_obs).to(device=self.device)

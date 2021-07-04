@@ -58,6 +58,7 @@ class CoCo_FF(Solver):
         """
         self.n_features = n_features
         self.strategy_dict = {}
+        self.binary_dict = {}
 
         p_train = train_data[0]
         obs_train = p_train['obstacles']
@@ -97,7 +98,8 @@ class CoCo_FF(Solver):
                     obs_strat = tuple(obs_strats[ii_obs])
 
                     if obs_strat not in self.strategy_dict.keys():
-                        self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, np.copy(y_true)))
+                        self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, y_true))
+                        self.binary_dict[self.n_strategies] = y_true
                         self.n_strategies += 1
 
                     self.labels[ii*self.problem.n_obs+ii_obs] = self.strategy_dict[obs_strat]
@@ -293,13 +295,8 @@ class CoCo_FF(Solver):
         obs_strats = {}
         uniq_idxs = np.unique(ind_max)
 
-        for ii,idx in enumerate(uniq_idxs):
-            for jj in range(self.labels.shape[0]):
-                # first index of training label is that strategy's idx
-                label = self.labels[jj]
-                if label[0] == idx:
-                    # remainder of training label is that strategy's binary pin
-                    obs_strats[idx] = label[1:]
+        for ii, idx in enumerate(uniq_idxs):
+            obs_strats[idx] = self.binary_dict[idx]
 
         # Generate Cartesian product of strategy combinations
         vv = [np.arange(0,self.n_evals) for _ in range(self.problem.n_obs)]
