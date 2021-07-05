@@ -353,6 +353,12 @@ class Meta_FF(CoCo_FF):
                                                 ii_obs=ii_obs)
                             cnn_inputs[prb_idx_range] = torch.from_numpy(X_cnn_inner).float().to(device=self.device)
 
+                            label_idx_range = range(idx_val*self.problem.n_obs*self.T_mpc, idx_val*self.problem.n_obs*self.T_mpc + self.problem.n_obs)
+                            prb_idx_range = range(self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*i_t, self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*(i_t+1))
+                            labels[prb_idx_range] = self.labels[label_idx_range, 0]
+
+                    labels = torch.from_numpy(labels).long().to(device=self.device)
+
                     opt_weights = self.model.prior(batch_size*self.T_mpc)
                     outputs = model(cnn_inputs, ff_inputs, opt_weights)
 
