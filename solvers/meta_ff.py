@@ -75,7 +75,7 @@ class Meta_FF(CoCo_FF):
         self.y_shape = self.Y[0].shape
 
         self.features = np.zeros((self.num_train*self.problem.n_obs*self.T_mpc, self.n_features))
-        self.cnn_features = np.zeros((self.num_train*self.problem.n_obs, 3, self.problem.H, self.problem.W))
+        self.cnn_features = np.zeros((self.num_train*self.problem.n_obs*self.T_mpc, 3, self.problem.H, self.problem.W))
         self.labels = np.zeros((self.num_train*self.problem.n_obs*self.T_mpc, 1+self.n_y), dtype=int)
         self.n_strategies = 0
 
