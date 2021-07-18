@@ -239,7 +239,7 @@ class Meta_FF(CoCo_FF):
                 labels = torch.from_numpy(labels).long().to(device=self.device)
 
                 loss = torch.zeros([self.update_step], requires_grad=True).to(device=self.device)
-                for ii_step in range(self.update_step):
+                for i_t in range(self.update_step):
                     # Compute standard CoCo classification loss over full trajectory using current set of weights
                     coco_weights = self.prior(self.coco_last_layer, batch_size*self.T_mpc)
                     coco_weights = fast_weights[:-2] + coco_weights
@@ -247,7 +247,7 @@ class Meta_FF(CoCo_FF):
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
                     accuracies.append(accuracy)
-                    loss[ii_step] = training_loss(outputs, labels).float().to(device=self.device).item()
+                    loss[i_t] = training_loss(outputs, labels).float().to(device=self.device).item()
 
                     # Skip inner loop if inaccurate
                     if len(accuracies) < self.buffer_len or np.mean(accuracies) < self.accuracy_thresh:
@@ -263,7 +263,7 @@ class Meta_FF(CoCo_FF):
                     class_labels = torch.argmax(class_scores, axis=1).detach().cpu().numpy()
 
                     y_guesses = -1*np.ones((len(idx), 4*self.problem.n_obs, self.problem.N-1), dtype=int)
-                    for prb_idx in range(len(idx)):
+                    for prb_idx, idx_val in enumerate(idx):
                         # Grab strategy indices for a particular problem
                         prb_idx_range = range(self.problem.n_obs*prb_idx, self.problem.n_obs*(prb_idx+1))
                         class_labels_prb = class_labels[prb_idx_range]
@@ -287,19 +287,12 @@ class Meta_FF(CoCo_FF):
                             ff_inner = torch.from_numpy(self.problem.propagate_features(feature_vec, u0, self.prob_features))
                             ff_inputs_inner[prb_idx_range] = ff_inner.repeat(self.problem.n_obs,1).float().to(device=self.device)
 
-                    # # TODO(acauligi): use multiprocessing to parallelize this
-                    # pool = Pool(processes=1)
-                    # setup_args = []
-                    # for prb_idx, idx_val in enumerate(idx):
-                    #     setup_args.append((prob_params_list[prb_idx], y_guesses[prb_idx]))
-                    # mp_out = pool.map(self.solve_pinned, setup_args)
-
                     prob_success_flags = torch.from_numpy(prob_success_flags).to(device=self.device)
 
                     # Compute hinge loss using class score from each applied strategy
                     inner_loss = torch.zeros(len(idx), requires_grad=True).to(device=self.device)
                     for prb_idx, idx_val in enumerate(idx):
-                        prb_idx_range = range(self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*ii_step, self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*(ii_step+1))
+                        prb_idx_range = range(self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*i_t, self.problem.n_obs*self.T_mpc*prb_idx + self.problem.n_obs*(i_t+1))
                         feas_scores_prb = feas_scores[prb_idx_range]
 
                         feas_loss = torch.zeros(self.problem.n_obs).to(device=self.device)
