@@ -162,19 +162,33 @@ class Meta_FF(CoCo_FF):
         return [zz.clone().reshape(1, *zz.shape).expand(
             batch_size, *zz.shape) for zz in weights]
 
-    def solve_pinned(self, args, solver=cp.MOSEK):
+    def solve_pinned(self, args, queue, solver=cp.GUROBI):
         prob_params, y_guess = args
         prob_success, optvals = False, (None)
-        try:
+        if solver == cp.GUROBI:
+            try:
+                prob_success, _, _, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=cp.GUROBI)
+            except:
+                prob_success, optvals = False, (None)
+        elif solver == cp.MOSEK:
             try:
                 prob_success, _, _, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=cp.MOSEK)
             except:
-                prob_success, _, _, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=cp.GUROBI)
-        except:
-            prob_success, optvals = False, (None)
-        return prob_success, optvals
+                prob_success, optvals = False, (None)
+        elif solver == cp.OSQP:
+            try:
+                prob_success, _, _, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=cp.OSQP)
+            except:
+                prob_success, optvals = False, (None)
+        elif solver == cp.ECOS:
+            try:
+                prob_success, _, _, optvals = self.problem.solve_pinned(prob_params, y_guess, solver=cp.ECOS)
+            except:
+                prob_success, optvals = False, (None)
+        # return prob_success, optvals
+        queue.put((prob_success, optvals))
 
-    def train(self, train_data, summary_writer_fn, verbose=False):
+    def train(self, train_data, summary_writer_fn, verbose=False, solver=cp.GUROBI):
         # grab training params
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
         BATCH_SIZE = self.training_params['BATCH_SIZE']
@@ -247,7 +261,7 @@ class Meta_FF(CoCo_FF):
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float()).detach().cpu().numpy()
                     accuracies.append(accuracy)
-                    loss[i_t] = training_loss(outputs, labels).float().to(device=self.device).item()
+                    loss[i_t] = training_loss(outputs, labels).float().to(device=self.device)
 
                     # Skip inner loop if inaccurate
                     if len(accuracies) < self.buffer_len or np.mean(accuracies) < self.accuracy_thresh:
@@ -271,11 +285,25 @@ class Meta_FF(CoCo_FF):
                             y_obs = self.binary_dict[cl]
                             y_guesses[prb_idx, 4*cl_ii:4*(cl_ii+1)] = np.reshape(y_obs, (4, self.problem.N-1))
 
-                    prob_success_flags = np.ones(len(idx))
-                    for prb_idx, idx_val in enumerate(idx):
-                        prob_success, optvals = self.solve_pinned((prob_params_list[prb_idx], y_guesses[prb_idx]))
+                    with torch.no_grad():
+                        prob_success_flags = np.ones(len(idx))
+                        processes, queues = [], []
 
-                        prob_success_flags[prb_idx] = 1. if prob_success else -1.
+                        for prb_idx, idx_val in enumerate(idx):
+                            qq = mp.Queue()
+                            pp = Process(target=self.solve_pinned, args=(prob_params_list[prb_idx], y_guesses[prb_idx], qq))
+                            pp.start()
+                            processes.append(pp)
+                            queues.append(qq)
+                        for pp in processes:
+                            pp.join()
+                        for prb_idx, qq in enumerate(queues):
+                            prob_success, optvals = qq.get()
+                            prob_success_flags[prb_idx] = 1. if prob_success else -1.
+
+                    for prb_idx, idx_val in enumerate(idx):
+                        # prob_success, optvals = self.solve_pinned((prob_params_list[prb_idx], y_guesses[prb_idx]))
+                        # prob_success_flags[prb_idx] = 1. if prob_success else -1.
 
                         # For successful optimization problems, propagate the initial state of robot forward when applicable
                         if prob_success:
@@ -306,7 +334,7 @@ class Meta_FF(CoCo_FF):
 
                     # Descent step on feas_model network weights
                     grad = torch.autograd.grad(inner_loss, fast_weights, create_graph=True)
-                    fast_weights = list(map(lambda p: p[1] - torch.square(self.update_lr_sqrt) * p[0], zip(grad, fast_weights)))
+                    fast_weights = list(map(lambda pp: pp[1] - torch.square(self.update_lr_sqrt) * pp[0], zip(grad, fast_weights)))
 
                 loss = torch.sum(loss)
                 loss.backward()
@@ -353,50 +381,48 @@ class Meta_FF(CoCo_FF):
         verbose and print('Saved model at {}'.format(self.model_fn))
         verbose and print('Saved feas model at {}'.format(self.feas_fn))
 
-    def forward(self, prob_params, solver=cp.MOSEK, max_evals=1):
-        # model = self.model
+    def forward(self, prob_params, solver=cp.GUROBI, max_evals=1):
+        model = self.model
 
-        # t0 = time.time()
+        t0 = time.time()
 
-        # ff_inputs = torch.zeros((self.problem.n_obs, self.n_features)).to(device=self.device)
-        # cnn_inputs = torch.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W)).to(device=self.device)
-        # features = self.problem.construct_features(prob_params, self.prob_features)
-        # ff_inputs = torch.from_numpy(features).repeat((self.problem.n_obs,1)).float().to(device=self.device)
+        features = self.problem.construct_features(prob_params, self.prob_features)
+        ff_inputs = torch.from_numpy(features).repeat((self.problem.n_obs,1)).float().to(device=self.device)
 
-        # X_cnn = np.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W))
-        # for ii_obs in range(self.problem.n_obs):
-        #     X_cnn[ii_obs] = self.problem.construct_cnn_features(prob_params, \
-        #                     self.prob_features, \
-        #                     ii_obs=ii_obs)
-        # cnn_inputs = torch.from_numpy(X_cnn).float().to(device=self.device)
+        X_cnn = np.zeros((self.problem.n_obs, 3, self.problem.H, self.problem.W))
+        for ii_obs in range(self.problem.n_obs):
+            X_cnn[ii_obs] = self.problem.construct_cnn_features(prob_params, \
+                            self.prob_features, \
+                            ii_obs=ii_obs)
+        cnn_inputs = torch.from_numpy(X_cnn).float().to(device=self.device)
 
-        # fast_weights = self.shared_params + self.feas_last_layer
-        # fast_weights = self.prior(fast_weights, self.problem.n_obs)
-        # opt_weights = self.prior(self.shared_params + self.coco_last_layer, self.problem.n_obs)
+        fast_weights = self.shared_params + self.feas_last_layer
+        fast_weights = self.prior(fast_weights, self.problem.n_obs)
+        opt_weights = self.prior(self.shared_params + self.coco_last_layer, self.problem.n_obs)
 
-        # scores = self.model(cnn_inputs, ff_inputs, opt_weights).cpu().detach().numpy()[:]
-        # feas_scores = self.model(cnn_inputs, ff_inputs, fast_weights)
+        scores = self.model(cnn_inputs, ff_inputs, opt_weights).cpu().detach().numpy()[:]
+        feas_scores = self.model(cnn_inputs, ff_inputs, fast_weights)
 
-        # torch.cuda.synchronize()
+        torch.cuda.synchronize()
 
-        # total_time = time.time()-t0
+        total_time = time.time()-t0
 
-        # ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]
+        ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]
 
-        # obs_strats = {}
-        # uniq_idxs = np.unique(ind_max)
+        obs_strats = {}
+        uniq_idxs = np.unique(ind_max)
 
-        # for ii,idx in enumerate(uniq_idxs):
-        #     for jj in range(self.labels.shape[0]):
-        #         # first index of training label is that strategy's idx
-        #         label = self.labels[jj]
-        #         if label[0] == idx:
-        #             # remainder of training label is that strategy's binary pin
-        #             obs_strats[idx] = label[1:]
+        for ii,idx in enumerate(uniq_idxs):
+            for jj in range(self.labels.shape[0]):
+                # first index of training label is that strategy's idx
+                label = self.labels[jj]
+                if label[0] == idx:
+                    # remainder of training label is that strategy's binary pin
+                    obs_strats[idx] = label[1:]
 
-        # # Generate Cartesian product of strategy combinations
-        # vv = [np.arange(0,self.n_evals) for _ in range(self.problem.n_obs)]
-        # strategy_tuples = list(itertools.product(*vv))
+        # Generate Cartesian product of strategy combinations
+        vv = [np.arange(0,self.n_evals) for _ in range(self.problem.n_obs)]
+        strategy_tuples = list(itertools.product(*vv))
 
         # # Sample from candidate strategy tuples based on "better" combinations
         # probs_str = [1./(np.sum(st)+1.) for st in strategy_tuples]  # lower sum(st) values --> better
