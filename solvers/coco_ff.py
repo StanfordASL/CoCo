@@ -12,6 +12,7 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.utils.tensorboard import SummaryWriter
 from torch.nn import Sigmoid
 from datetime import datetime
 
@@ -54,6 +55,7 @@ class CoCo_FF(Solver):
         """
         self.n_features = n_features
         self.strategy_dict = {}
+        self.strategy_dict_inv = {}
 
         p_train = train_data[0]
         obs_train = p_train['obstacles']
@@ -62,17 +64,6 @@ class CoCo_FF(Solver):
         for k in p_train.keys():
             self.num_train = len(p_train[k])
 
-        ## TODO(acauligi): add support for combining p_train & p_test correctly
-        ## to be able to generate strategies for train and test params here
-        # p_test = None
-        # x_test = None
-        # y_test = np.empty((*y_train.shape[:-1], 0))   # Assumes y_train is 3D tensor
-        # if test_data:
-        #   p_test, y_test = test_data[:2]
-        #   for k in p_test.keys():
-        #     self.num_test = len(p_test[k])
-        # num_probs = self.num_train + self.num_test
-        # self.Y = np.dstack((Y_train, Y_test))         # Stack Y_train and Y_test along dim=2
         num_probs = self.num_train
         params = p_train
         self.Y = y_train
@@ -100,7 +91,8 @@ class CoCo_FF(Solver):
                 obs_strat = tuple(obs_strats[ii_obs])
 
                 if obs_strat not in self.strategy_dict.keys():
-                    self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, np.copy(y_true)))
+                    self.strategy_dict[obs_strat] = np.hstack((self.n_strategies, y_true))
+                    self.strategy_dict_inv[self.n_strategies] = y_true
                     self.n_strategies += 1
 
                 self.labels[ii*self.problem.n_obs+ii_obs] = self.strategy_dict[obs_strat]
@@ -147,7 +139,7 @@ class CoCo_FF(Solver):
             self.model.load_state_dict(torch.load(fn_classifier_model))
             self.model_fn = fn_classifier_model
 
-    def train(self, train_data=None, verbose=True):
+    def train(self, train_data, summary_writer_fn, verbose=False):
         # grab training params
         BATCH_SIZE = self.training_params['BATCH_SIZE']
         TRAINING_ITERATIONS = self.training_params['TRAINING_ITERATIONS']
@@ -158,23 +150,32 @@ class CoCo_FF(Solver):
 
         model = self.model
         model.to(device=self.device)
+        writer = SummaryWriter(summary_writer_fn)
 
         X = self.features[:self.problem.n_obs*self.num_train]
         X_cnn = None
         if 'obstacles_map' in self.prob_features:
-            # X_cnn = self.cnn_features[:self.problem.n_obs*self.num_train]
-            # TODO(acauligi)
             params = train_data[0]
             X_cnn = np.zeros((BATCH_SIZE, 3,self.problem.H,self.problem.W))
         Y = self.labels[:self.problem.n_obs*self.num_train,0]
+
+        # Split into train + validation set
+        rand_idx = list(np.arange(0, X.shape[0]-1))
+        random.shuffle(rand_idx)
+        val_size = int(0.05*X.shape[0])
+        assert val_size >= TEST_BATCH_SIZE
+        X, Y = X[rand_idx], Y[rand_idx]
+        X_val, Y_val = X[:val_size], Y[:val_size]
+        X, Y = X[val_size:], Y[val_size:]
 
         training_loss = torch.nn.CrossEntropyLoss()
         opt = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.00001)
 
         itr = 1
+        running_loss = 0.0
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
             t0 = time.time()
-            running_loss = 0.0
+
             rand_idx = list(np.arange(0,X.shape[0]-1))
             random.shuffle(rand_idx)
 
@@ -191,7 +192,7 @@ class CoCo_FF(Solver):
                 # forward + backward + optimize
                 outputs = None
                 if 'obstacles_map' in self.prob_features:
-                    X_cnn = np.zeros((len(idx), 3,self.problem.H,self.problem.W))
+                    X_cnn = np.zeros((len(idx), 3, self.problem.H, self.problem.W))
                     for idx_ii, idx_val in enumerate(idx):
                         prob_params = {}
                         for k in params:
@@ -206,20 +207,18 @@ class CoCo_FF(Solver):
                 class_guesses = torch.argmax(outputs,1)
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                 loss.backward()
-                #torch.nn.utils.clip_grad_norm(model.parameters(),0.1)
                 opt.step()
 
-                # print statistics\n",
                 running_loss += loss.item()
                 if itr % CHECKPOINT_AFTER == 0:
-                    rand_idx = list(np.arange(0,X.shape[0]-1))
+                    rand_idx = list(np.arange(0, X_val.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
-                    ff_inputs = Variable(torch.from_numpy(X[test_inds,:])).float().to(device=self.device)
-                    labels = Variable(torch.from_numpy(Y[test_inds])).long().to(device=self.device)
+                    ff_inputs = Variable(torch.from_numpy(X_val[test_inds,:])).float().to(device=self.device)
+                    labels = Variable(torch.from_numpy(Y_val[test_inds])).long().to(device=self.device)
 
                     # forward + backward + optimize
-                    if type(model) is CNNet:
+                    if 'obstacles_map' in self.prob_features:
                         X_cnn = np.zeros((len(test_inds), 3,self.problem.H,self.problem.W))
                         for idx_ii, idx_val in enumerate(test_inds):
                             prob_params = {}
@@ -227,27 +226,28 @@ class CoCo_FF(Solver):
                                 prob_params[k] = params[k][self.cnn_features_idx[idx_val][0]]
                             X_cnn[idx_ii] = self.problem.construct_cnn_features(prob_params, self.prob_features, ii_obs=self.cnn_features_idx[idx_val][1])
                         cnn_inputs = Variable(torch.from_numpy(X_cnn)).float().to(device=self.device)
-                        # cnn_inputs = Variable(torch.from_numpy(X_cnn[test_inds,:])).float().to(device=self.device)
                         outputs = model(cnn_inputs, ff_inputs)
                     else:
                         outputs = model(ff_inputs)
 
                     loss = training_loss(outputs, labels).float().to(device=self.device)
-                    class_guesses = torch.argmax(outputs,1)
+                    class_guesses = torch.argmax(outputs, 1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                     verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
+                    writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
+                    writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
+                    writer.add_scalar('Accuracy/test', accuracy.item(), itr)
+                    running_loss = 0.0
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.state_dict(), self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
-                    # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
         torch.save(model.state_dict(), self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
-
         print('Done training')
 
     def forward(self, prob_params, solver=cp.MOSEK, max_evals=16):
@@ -281,19 +281,6 @@ class CoCo_FF(Solver):
 
         ind_max = np.argsort(scores, axis=1)[:,-self.n_evals:][:,::-1]
 
-        # Loop through strategy dictionary once
-        # Save ii'th stratey in obs_strats dictionary
-        obs_strats = {}
-        uniq_idxs = np.unique(ind_max)
-
-        for ii,idx in enumerate(uniq_idxs):
-            for jj in range(self.labels.shape[0]):
-                # first index of training label is that strategy's idx
-                label = self.labels[jj]
-                if label[0] == idx:
-                    # remainder of training label is that strategy's binary pin
-                    obs_strats[idx] = label[1:]
-
         # Generate Cartesian product of strategy combinations
         vv = [np.arange(0,self.n_evals) for _ in range(self.problem.n_obs)]
         strategy_tuples = list(itertools.product(*vv))
@@ -315,7 +302,7 @@ class CoCo_FF(Solver):
             y_guess = -np.ones((4*self.problem.n_obs, self.problem.N-1))
             for ii_obs in range(self.problem.n_obs):
                 # rows of ind_max correspond to ii_obs, column to desired strategy
-                y_obs = obs_strats[ind_max[ii_obs, str_tuple[ii_obs]]]
+                y_obs = self.strategy_dict_inv[ind_max[ii_obs, str_tuple[ii_obs]]]
                 y_guess[4*ii_obs:4*(ii_obs+1)] = np.reshape(y_obs, (4,self.problem.N-1))
             if (y_guess < 0).any():
                 print("Strategy was not correctly found!")

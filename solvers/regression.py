@@ -120,14 +120,24 @@ class Regression(Solver):
         X = self.features[:self.num_train]
         Y = self.labels[:self.num_train]
 
+        # Split into train + validation set
+        rand_idx = list(np.arange(0, X.shape[0]-1))
+        random.shuffle(rand_idx)
+        val_size = int(0.05*X.shape[0])
+        assert val_size >= TEST_BATCH_SIZE
+        X, Y = X[rand_idx], Y[rand_idx]
+        X_val, Y_val = X[:val_size], Y[:val_size]
+        X, Y = X[val_size:], Y[val_size:]
+
         # See: https://discuss.pytorch.org/t/multi-label-classification-in-pytorch/905/45
         training_loss = torch.nn.BCEWithLogitsLoss()
         opt = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.001)
 
         itr = 1
+        running_loss = 0.0
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
             t0 = time.time()
-            running_loss = 0.0
+
             rand_idx = list(np.arange(0,X.shape[0]-1))
             random.shuffle(rand_idx)
 
@@ -147,27 +157,28 @@ class Regression(Solver):
                 loss.backward()
                 opt.step()
 
-                # print statistics\n",
                 running_loss += loss.item()
                 if itr % CHECKPOINT_AFTER == 0:
-                    rand_idx = list(np.arange(0,X.shape[0]-1))
+                    rand_idx = list(np.arange(0, X_val.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
-                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().to(device=self.device)
-                    y_out = Variable(torch.from_numpy(Y[test_inds])).float().to(device=self.device)
+                    inputs = Variable(torch.from_numpy(X_val[test_inds,:])).float().to(device=self.device)
+                    y_out = Variable(torch.from_numpy(Y_val[test_inds])).float().to(device=self.device)
 
                     # forward + backward + optimize
                     outputs = model(inputs)
                     loss = training_loss(outputs, y_out).float().to(device=self.device)
                     outputs = Sigmoid()(outputs).round()
-                    accuracy = [float(all(torch.eq(outputs[ii],y_out[ii]))) for ii in range(TEST_BATCH_SIZE)]
-                    accuracy = np.mean(accuracy)
-                    verbose and print("loss:   "+str(loss.item()) + " , acc: " + str(accuracy))
+                    accuracy = torch.all(torch.eq(outputs, y_out), dim=1).float().mean()
+                    verbose and print("loss:   "+str(loss.item()) + " , acc: " + str(accuracy.item()))
+                    # writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
+                    # writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
+                    # writer.add_scalar('Accuracy/test', accuracy.item(), itr)
+                    # running_loss = 0.0
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.state_dict(), self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
-                    # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
