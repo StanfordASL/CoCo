@@ -104,9 +104,9 @@ class Cartpole(Problem):
                 cons += [sc[jj,kk] - self.kappa*d_k - self.nu*dd_k <= 
                          f_min*(y_r-1)]
 
-            cons += [-sc[jj,kk] <= 0]
-            cons += [sc[jj,kk] <= f_max*y_l]
-            cons += [sc[jj,kk] <= f_max*y_r]
+                cons += [-sc[jj,kk] <= 0]
+                cons += [sc[jj,kk] <= f_max*y_l]
+                cons += [sc[jj,kk] <= f_max*y_r]
 
             # LQR cost
             lqr_cost = 0.
@@ -176,9 +176,9 @@ class Cartpole(Problem):
                 cons += [sc[jj,kk] - self.kappa*d_k - self.nu*dd_k <=
                          f_min*(y_r-1)]
 
-            cons += [-sc[jj,kk] <= 0]
-            cons += [sc[jj,kk] <= f_max*y_l]
-            cons += [sc[jj,kk] <= f_max*y_r]
+                cons += [-sc[jj,kk] <= 0]
+                cons += [sc[jj,kk] <= f_max*y_l]
+                cons += [sc[jj,kk] <= f_max*y_r]
 
             # LQR cost
             lqr_cost = 0.

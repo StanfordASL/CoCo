@@ -47,6 +47,9 @@ class FreeFlyer(Problem):
         self.init_bin_problem()
         self.init_mlopt_problem()
 
+        self.reset_gusto_params()
+        self.init_gusto_problem()
+
     def init_bin_problem(self):
         cons = []
 
@@ -176,6 +179,254 @@ class FreeFlyer(Problem):
           lqr_cost += cp.quad_form(u[:,kk], self.R)
 
         self.mlopt_prob = cp.Problem(cp.Minimize(lqr_cost), cons)
+
+    def init_gusto_problem(self):
+        cons = []
+
+        # Variables
+        x = cp.Variable((2*self.n,self.N)) # state
+        u = cp.Variable((self.m,self.N-1))  # control
+        xlb_slack_vars = cp.Variable((2*self.n, self.N), nonneg=True)
+        xub_slack_vars = cp.Variable((2*self.n, self.N), nonneg=True)
+        tr_slack_vars = cp.Variable(2*self.N-1, nonneg=True)
+        sdf_slack_vars = cp.Variable(self.N*self.n_obs, nonneg=True)
+        self.gusto_prob_variables = {'x':x, 'u':u,
+          'xlb_slack_vars':xlb_slack_vars, 'xub_slack_vars':xub_slack_vars,
+          'tr_slack_vars':tr_slack_vars, 'sdf_slack_vars':sdf_slack_vars}
+
+        # Parameters
+        x0 = cp.Parameter(2*self.n)
+        xg = cp.Parameter(2*self.n)
+        obstacles = cp.Parameter((4, self.n_obs))
+        omega = cp.Parameter(1)
+        delta = cp.Parameter(1)
+        x_bar = cp.Parameter((2*self.n, self.N)) # state reference
+        u_bar = cp.Parameter((self.m, self.N-1))  # control reference
+        dists = cp.Parameter(self.N*self.n_obs)
+        sdf_grads = cp.Parameter((self.n, self.N*self.n_obs))
+        self.gusto_prob_parameters = {'x0': x0, 'xg': xg, 'obstacles': obstacles,
+          'omega':omega, 'delta':delta, 'x_bar':x_bar, 'u_bar':u_bar,
+          'dists':dists, 'sdf_grads':sdf_grads}
+
+        # Initial condition
+        cons += [x[:,0] == x0]
+
+        # Dynamics constraints
+        for ii in range(self.N-1):
+            cons += [x[:,ii+1] - (self.Ak @ x[:,ii] + self.Bk @ u[:,ii]) == np.zeros(2*self.n)]
+
+        # Control constraints
+        for i_t in range(self.N-1):
+            cons += [cp.norm(u[:, i_t]) <= self.umax]
+
+        penalty_cost = 0.0
+        # State bounds penalties
+        for i_t in range(self.N):
+            for jj in range(self.n):
+                cons += [self.posmin[jj] - x[jj,i_t] <= xlb_slack_vars[jj, i_t]]
+                cons += [x[jj,i_t] - self.posmax[jj] <= xub_slack_vars[jj, i_t]]
+                cons += [self.velmin - x[self.n+jj, i_t] <= xlb_slack_vars[self.n+jj, i_t]]
+                cons += [x[self.n+jj, i_t] - self.velmax <= xub_slack_vars[self.n+jj, i_t]]
+        penalty_cost += omega*cp.sum(xlb_slack_vars) + omega*cp.sum(xub_slack_vars)
+
+        # Collision avoidance penalty
+        for i_t in range(self.N):
+            for ii_obs in range(self.n_obs):
+                n_hat, dist = sdf_grads[:, self.n_obs*i_t+ii_obs], dists[self.n_obs*i_t+ii_obs]
+                cons += [-(dist + n_hat.T @ (x[:self.n, i_t] - x_bar[:self.n, i_t])) <= sdf_slack_vars[self.n_obs*i_t+ii_obs]]
+        penalty_cost += omega*cp.sum(sdf_slack_vars)
+
+        # Trust region penalties
+        for i_t in range(self.N):
+            cons += [cp.norm(x[:, i_t] - x_bar[:, i_t], 1) - delta <= tr_slack_vars[i_t]]
+        for i_t in range(self.N-1):
+            cons += [cp.norm(u[:, i_t] - u_bar[:, i_t], 1) - delta <= tr_slack_vars[self.N+i_t]]
+        penalty_cost += omega*cp.sum(tr_slack_vars)
+
+        lqr_cost = 0.
+        # l2-norm of lqr_cost
+        for i_t in range(self.N):
+            lqr_cost += cp.quad_form(x[:, i_t]-xg, self.Q)
+
+        for i_t in range(self.N-1):
+            lqr_cost += cp.quad_form(u[:, i_t], self.R)
+
+        self.gusto_prob = cp.Problem(cp.Minimize(lqr_cost+penalty_cost), cons)
+
+    def solve_gusto_problem(self, params, max_iter, solver=cp.GUROBI):
+        x0, xg, obstacles = params['x0'], params['xg'], params['obstacles']
+
+        self.reset_gusto_params()
+        omega, delta = self.omega0, self.delta0
+
+        gusto_params = {}
+        for p in params:
+            gusto_params[p] = params[p]
+
+        # Linear interpolation between x0 and xg for state guess
+        x_bar, u_bar = np.zeros((2*self.n, self.N)), np.zeros((self.m, self.N-1))
+        for ii in range(2*self.n):
+            x_bar[ii,:] = np.linspace(x0[ii], xg[ii], self.N)
+
+        if solver == cp.MOSEK:
+            # See: https://docs.mosek.com/9.1/dotnetfusion/param-groups.html#doc-param-groups
+            if not msk_param_dict:
+              msk_param_dict = {}
+              with open(os.path.join(os.environ['CoCo'], 'config/mosek.yaml')) as file:
+                  msk_param_dict = yaml.load(file, Loader=yaml.FullLoader)
+        elif solver == cp.GUROBI:
+            grb_param_dict = {}
+            with open(os.path.join(os.environ['CoCo'], 'config/gurobi.yaml')) as file:
+                grb_param_dict = yaml.load(file, Loader=yaml.FullLoader)
+
+        prob_success, cost, solve_time = False, np.Inf, 0.0
+        solve_gusto, ii_iter = True, 0
+        while solve_gusto and ii_iter < max_iter:
+            ii_iter += 1
+
+            dists = np.zeros(self.N*self.n_obs)
+            sdf_grads = np.zeros((self.n, self.N*self.n_obs))
+            for i_t in range(self.N):
+                for ii_obs in range(self.n_obs):
+                    obs = obstacles[:, ii_obs]
+                    dist, n_hat = self.get_sdf(x0, obs)
+                    dists[self.n_obs*i_t+ii_obs] = dist
+                    sdf_grads[:, self.n_obs*i_t+ii_obs] = n_hat
+
+            gusto_params['omega'] = np.array([omega])
+            gusto_params['delta'] = np.array([delta])
+            gusto_params['x_bar'] = x_bar
+            gusto_params['u_bar'] = u_bar
+            gusto_params['dists'] = dists
+            gusto_params['sdf_grads'] = sdf_grads
+
+            for p in self.gusto_prob_parameters:
+                self.gusto_prob_parameters[p].value = gusto_params[p]
+
+            if solver == cp.MOSEK:
+                self.gusto_prob.solve(solver=solver, mosek_params=msk_param_dict)
+            elif solver == cp.GUROBI:
+                self.gusto_prob.solve(solver=solver, **grb_param_dict)
+            solve_time += self.gusto_prob.solver_stats.solve_time
+
+            x_star, u_star, y_star = None, None, None
+            if self.gusto_prob.status in ['optimal', 'optimal_inaccurate'] and self.gusto_prob.status not in ['infeasible', 'unbounded']:
+                prob_success = True
+                x_star = self.gusto_prob_variables['x'].value
+                u_star = self.gusto_prob_variables['u'].value
+            else:
+                prob_success, accept_soln, solve_gusto = False, False, False
+                continue
+
+            # Check for trust region satisfaction
+            trust_region_violated = False
+            for i_t in range(self.N):
+                if np.linalg.norm(x_star[:, i_t] - x_bar[:, i_t], 1) > delta:
+                    trust_region_violated = True
+                    break
+
+                if i_t == self.N-1:
+                    continue
+                if np.linalg.norm(u_star[:, i_t] - u_bar[:, i_t], 1) > delta:
+                    trust_region_violated = True
+                    break
+
+            if trust_region_violated:
+                accept_soln = False
+                delta = delta
+                omega = self.gamma_fail*omega
+            else:
+                accept_soln = False
+                rho = self.trust_region_ratio(x_star, x_bar, gusto_params)
+                print(rho)
+                if rho > self.rho1:
+                    delta *= self.beta_fail
+                    omega = omega
+                    accept_soln = False
+                else:
+                    accept_soln = True
+                    if rho < self.rho0:
+                        delta *= self.beta_succ
+                    else:
+                        delta = delta
+
+                cvx_con_violated = False
+                for i_t in range(self.N):
+                    for jj in range(self.n):
+                        if self.posmin[jj] - x_star[jj, i_t] > 0 or \
+                          x_star[jj, i_t] - self.posmax[jj] > 0 or \
+                          self.velmin - x_star[self.n+jj, i_t] > 0 or \
+                          x_star[self.n+jj, i_t] - self.velmax > 0:
+                            cvx_con_violated = True
+                            break
+
+                if cvx_con_violated:
+                    omega = self.gamma_fail * omega
+                else:
+                    omega = omega
+
+                if accept_soln:
+                    primal_diff = 0.0
+                    for i_t in range(self.N):
+                        primal_diff += np.linalg.norm(x_star[:, i_t] - x_bar[:, i_t], 1)
+                        if i_t == self.N-1:
+                            continue
+                        primal_diff += np.linalg.norm(u_star[:, i_t] - u_bar[:, i_t], 1)
+                    if primal_diff < self.gusto_conv_thresh:
+                        solve_gusto = False
+
+                    x_bar, u_bar = x_star, u_star
+
+        for key in self.gusto_prob_parameters:
+            self.gusto_prob_parameters[key].value = None
+
+        # Check for state constraint satisfaction
+        state_cons_satisfied = True
+        ineq_tol = 1e-5
+        for i_t in range(self.N):
+            if not state_cons_satisfied:
+                continue
+
+            for jj in range(self.n):
+                if self.posmin[jj] - x_star[jj, i_t] > ineq_tol:
+                    state_cons_satisfied = False
+                if x_star[jj, i_t] - self.posmax[jj] > ineq_tol:
+                    state_cons_satisfied = False
+                if self.velmin - x_star[self.n+jj, i_t] > ineq_tol:
+                    state_cons_satisfied = False
+                if x_star[self.n+jj, i_t] - self.velmax > ineq_tol:
+                    state_cons_satisfied = False
+
+            for ii_obs in range(self.n_obs):
+                if x_star[0, i_t] + ineq_tol >= obstacles[0, ii_obs] and x_star[0, i_t] - ineq_tol <= obstacles[1, ii_obs] and \
+                  x_star[1, i_t] + ineq_tol >= obstacles[2, ii_obs] and x_star[1, i_t]  - ineq_tol <= obstacles[3, ii_obs]:
+                    state_cons_satisfied = False
+        prob_success = accept_soln and state_cons_satisfied
+
+        lqr_cost = np.Inf
+        if prob_success:
+            # l2-norm of lqr_cost
+            lqr_cost = 0.
+            for i_t in range(self.N):
+                lqr_cost += (x_star[:, i_t] - xg).T @ self.Q @ (x_star[:, i_t] - xg)
+            for i_t in range(self.N-1):
+                lqr_cost += u_star[:, i_t].T @ self.R @ u_star[:, i_t]
+
+        return prob_success, lqr_cost, solve_time, ii_iter, (x_star, u_star)
+
+    def reset_gusto_params(self):
+        # Parameters for GuSTO algorithm
+        self.omega0 = 100.0
+        self.omega_max = 100000.0
+        self.omega_times = 10.0
+        self.eps = 1e-6
+        self.rho0 = 0.5
+        self.rho1 = 0.9
+        self.beta_succ = 2.0
+        self.beta_fail = 0.5
+        self.delta0 = 1000.0
+        self.gamma_fail = 5.0
+        self.gusto_conv_thresh = 1e-2
 
     def solve_micp(self, params, solver=cp.MOSEK, msk_param_dict=None):
         """High-level method to solve parameterized MICP.
@@ -372,3 +623,46 @@ class FreeFlyer(Problem):
                 table_img[0, row_range[0]:row_range[-1], col_range[0]:col_range[-1]] = 1.
 
         return table_img
+
+    def get_sdf(self, x0, obs):
+        x, y = x0[:self.n]
+        x_min, x_max, y_min, y_max = obs
+        sign = 1.0
+        if x >= x_min and x <= x_max and y >= y_min and y <= y_max:
+            sign = -1.0
+
+        x_proj = np.minimum(np.abs(x-x_min), np.abs(x-x_max))
+        y_proj = np.minimum(np.abs(y-y_min), np.abs(y-y_max))
+        dist = sign*np.minimum(x_proj, y_proj)
+
+        n_hat = np.array([0.0, 0.0])
+        if x_proj < y_proj:
+            if np.abs(x-x_min) < np.abs(x-x_max):
+                n_hat = np.array([x-x_min, 0.0])
+            else:
+                n_hat = np.array([x-x_max, 0.0])
+        else:
+            if np.abs(y-y_min) < np.abs(y-y_max):
+                n_hat = np.array([y-y_min, 0.0])
+            else:
+                n_hat = np.array([y-y_max, 0.0])
+        n_hat *= sign
+        return dist, n_hat
+
+    def trust_region_ratio(self, x_star, x_bar, params):
+        num, den = 0.0, 0.0
+
+        obstacles = params['obstacles']
+        for i_t in range(self.N):
+              x_it, x_it_bar = x_star[:self.n, i_t], x_bar[:self.n, i_t]
+              for ii_obs in range(self.n_obs):
+                  obs = obstacles[:, ii_obs]
+                  dist, n_hat = self.get_sdf(x_it_bar, obs)
+                  n_hat = n_hat / np.linalg.norm(n_hat)
+                  linearized = - (dist + n_hat.T @ (x_it - x_it_bar))
+
+                  dist, n_hat = self.get_sdf(x_it, obs)
+                  n_hat = n_hat / np.linalg.norm(n_hat)
+                  num += np.abs(-dist - linearized)
+                  den += np.abs(linearized)
+        return num / den
