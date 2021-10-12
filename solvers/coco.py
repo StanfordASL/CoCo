@@ -53,22 +53,13 @@ class CoCo(Solver):
         """
         self.n_features = n_features
         self.strategy_dict = {}
+        self.strategy_dict_inv = {}
 
         p_train = train_data[0]
         y_train = train_data[-3]
         for k in p_train.keys():
             self.num_train = len(p_train[k])
 
-        ## TODO(acauligi): add support for combining p_train & p_test correctly
-        ## to be able to generate strategies for train and test params here
-        # p_test = None
-        # y_test = np.empty((*y_train.shape[:-1], 0))   # Assumes y_train is 3D tensor
-        # if test_data:
-        #   p_test, y_test = test_data[:2]
-        #   for k in p_test.keys():
-        #     self.num_test = len(p_test[k])
-        # num_probs = self.num_train + self.num_test
-        # self.Y = np.dstack((Y_train, Y_test))         # Stack Y_train and Y_test along dim=2
         num_probs = self.num_train
         params = p_train
         self.Y = y_train
@@ -84,7 +75,8 @@ class CoCo(Solver):
             y_true = np.reshape(self.Y[ii,:,:], (self.n_y))
 
             if tuple(y_true) not in self.strategy_dict.keys():
-                self.strategy_dict[tuple(y_true)] = np.hstack((self.n_strategies,np.copy(y_true)))
+                self.strategy_dict[tuple(y_true)] = np.hstack((self.n_strategies, y_true))
+                self.strategy_dict_inv[self.n_strategies] = y_true
                 self.n_strategies += 1
             self.labels[ii] = self.strategy_dict[tuple(y_true)]
 
@@ -130,18 +122,28 @@ class CoCo(Solver):
         X = self.features[:self.num_train]
         Y = self.labels[:self.num_train,0]
 
+        # Split into train + validation set
+        rand_idx = list(np.arange(0, X.shape[0]-1))
+        random.shuffle(rand_idx)
+        val_size = int(0.05*X.shape[0])
+        assert val_size >= TEST_BATCH_SIZE
+        X, Y = X[rand_idx], Y[rand_idx]
+        X_val, Y_val = X[:val_size], Y[:val_size]
+        X, Y = X[val_size:], Y[val_size:]
+
         training_loss = torch.nn.CrossEntropyLoss()
         opt = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.00001)
 
         itr = 1
+        running_loss = 0.0
         for epoch in range(TRAINING_ITERATIONS):  # loop over the dataset multiple times
             t0 = time.time()
-            running_loss = 0.0
             rand_idx = list(np.arange(0,X.shape[0]-1))
             random.shuffle(rand_idx)
 
             # Sample all data points
             indices = [rand_idx[ii * BATCH_SIZE:(ii + 1) * BATCH_SIZE] for ii in range((len(rand_idx) + BATCH_SIZE - 1) // BATCH_SIZE)]
+
 
             for ii,idx in enumerate(indices):
                 # zero the parameter gradients
@@ -156,17 +158,15 @@ class CoCo(Solver):
                 class_guesses = torch.argmax(outputs,1)
                 accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                 loss.backward()
-                #torch.nn.utils.clip_grad_norm(model.parameters(),0.1)
                 opt.step()
 
-                # print statistics\n",
                 running_loss += loss.item()
                 if itr % CHECKPOINT_AFTER == 0:
-                    rand_idx = list(np.arange(0,X.shape[0]-1))
+                    rand_idx = list(np.arange(0, X_val.shape[0]-1))
                     random.shuffle(rand_idx)
                     test_inds = rand_idx[:TEST_BATCH_SIZE]
-                    inputs = Variable(torch.from_numpy(X[test_inds,:])).float().to(device=self.device)
-                    labels = Variable(torch.from_numpy(Y[test_inds])).long().to(device=self.device)
+                    inputs = Variable(torch.from_numpy(X_val[test_inds,:])).float().to(device=self.device)
+                    labels = Variable(torch.from_numpy(Y_val[test_inds])).long().to(device=self.device)
 
                     # forward + backward + optimize
                     outputs = model(inputs)
@@ -174,18 +174,20 @@ class CoCo(Solver):
                     class_guesses = torch.argmax(outputs,1)
                     accuracy = torch.mean(torch.eq(class_guesses,labels).float())
                     verbose and print("loss:   "+str(loss.item())+",   acc:  "+str(accuracy.item()))
+                    # writer.add_scalar('Loss/train', running_loss / float(self.training_params['CHECKPOINT_AFTER']) / float(BATCH_SIZE), itr)
+                    # writer.add_scalar('Loss/test', loss / float(TEST_BATCH_SIZE), itr)
+                    # writer.add_scalar('Accuracy/test', accuracy.item(), itr)
+                    # running_loss = 0.0
 
                 if itr % SAVEPOINT_AFTER == 0:
                     torch.save(model.state_dict(), self.model_fn)
                     verbose and print('Saved model at {}'.format(self.model_fn))
-                    # writer.add_scalar('Loss/train', running_loss, epoch)
 
                 itr += 1
             verbose and print('Done with epoch {} in {}s'.format(epoch, time.time()-t0))
 
         torch.save(model.state_dict(), self.model_fn)
         print('Saved model at {}'.format(self.model_fn))
-
         print('Done training')
 
     def forward(self, prob_params, solver=cp.MOSEK):
@@ -197,25 +199,9 @@ class CoCo(Solver):
         total_time = time.time()-t0
         ind_max = np.argsort(scores)[-self.n_evals:][::-1]
 
-        y_guesses = np.zeros((self.n_evals, self.n_y), dtype=int)
-
-        num_probs = self.num_train
+        prob_success, cost, n_evals, optvals = False, np.Inf, self.n_evals, None
         for ii,idx in enumerate(ind_max):
-            for jj in range(num_probs):
-                # first index of training label is that strategy's idx
-                label = self.labels[jj]
-                if label[0] == idx:
-                    # remainder of training label is that strategy's binary pin
-                    y_guesses[ii] = label[1:]
-                    break
-
-        prob_success, cost, n_evals, optvals = False, np.Inf, len(y_guesses), None
-        for ii,idx in enumerate(ind_max):
-            y_guess = y_guesses[ii]
-
-            # weirdly need to reshape in reverse order of cvxpy variable shape
-            y_guess = np.reshape(y_guess, self.y_shape)
-
+            y_guess = np.reshape(self.strategy_dict_inv[idx], self.y_shape)
             prob_success, cost, solve_time, optvals = self.problem.solve_pinned(prob_params, y_guess, solver)
 
             total_time += solve_time
