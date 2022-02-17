@@ -34,7 +34,7 @@ multiprocess==0.70.9
 nbconvert==5.6.1
 nbformat==5.0.6
 notebook==6.4.1
-numpy==1.18.4
+numpy==1.21.0
 osqp==0.6.1
 packaging==20.3
 pandas==1.0.3
